@@ -205,16 +205,11 @@ func (pm *PortManager) KillPID(pid int32, port int, dryRun bool) (*KillResult, e
 		}, nil
 	}
 
-	// Try graceful termination first
+	// Try graceful termination first, then force it. gopsutil's Kill sends SIGKILL on Unix and
+	// calls TerminateProcess on Windows, so this also builds on Windows (syscall.Kill doesn't exist there).
 	if err := proc.Terminate(); err != nil {
-		if runtime.GOOS == "windows" {
-			if err := proc.Kill(); err != nil {
-				return nil, fmt.Errorf("%s", accessDeniedKill)
-			}
-		} else {
-			if err := syscall.Kill(int(pid), syscall.SIGKILL); err != nil {
-				return nil, fmt.Errorf("%s", accessDeniedKill)
-			}
+		if err := proc.Kill(); err != nil {
+			return nil, fmt.Errorf("%s", accessDeniedKill)
 		}
 	}
 
