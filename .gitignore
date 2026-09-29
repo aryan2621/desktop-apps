@@ -20,6 +20,10 @@ target/
 __pycache__/
 *.egg-info/
 
+# PortMan core executable (scripts/build-core.sh)
+portman/build/
+portman/gui/src-tauri/binaries/
+
 # Go build output (PortMan CLI)
 portman/cli/portman
 portman/cli/dist/

@@ -173,26 +173,56 @@ impl IpcBridge {
 
 static RPC_ID: AtomicU64 = AtomicU64::new(1);
 
-fn workspace_root() -> PathBuf {
+/// The Python core built into one executable (scripts/build-core.sh) and bundled next to the
+/// app's own executable, so installed copies don't need Python.
+fn bundled_core() -> Option<PathBuf> {
+    let exe = std::env::current_exe().ok()?;
+    let core = exe.with_file_name(format!("portman-core{}", std::env::consts::EXE_SUFFIX));
+    core.is_file().then_some(core)
+}
+
+/// The portman source folder this binary was built from, if it still exists (development only;
+/// it's baked in at compile time, so it's absent on other machines).
+fn workspace_root() -> Option<PathBuf> {
     PathBuf::from(env!("CARGO_MANIFEST_DIR"))
         .join("../..")
         .canonicalize()
-        .expect("failed to resolve workspace root (expected portman repo root)")
+        .ok()
 }
 
 fn spawn_ipc_bridge() -> Result<IpcBridge, String> {
-    let root = workspace_root();
-    let python = resolve_python(&root);
-    let mut child = Command::new(&python)
-        .current_dir(&root)
-        .env("PYTHONPATH", root.to_string_lossy().as_ref())
-        .arg("-m")
-        .arg("core.ipc")
+    // Prefer the bundled core; PORTMAN_PYTHON forces the Python sources (for working on the core).
+    let force_python = std::env::var("PORTMAN_PYTHON").map_or(false, |v| !v.is_empty());
+    let (mut command, description) = match (bundled_core(), workspace_root()) {
+        (Some(core), _) if !force_python => {
+            let description = core.display().to_string();
+            (Command::new(core), description)
+        }
+        (_, Some(root)) => {
+            let python = resolve_python(&root);
+            let description = python.display().to_string();
+            let mut command = Command::new(&python);
+            command
+                .current_dir(&root)
+                .env("PYTHONPATH", root.to_string_lossy().as_ref())
+                .arg("-m")
+                .arg("core.ipc");
+            (command, description)
+        }
+        _ => return Err("PortMan's core is missing from this install. Please reinstall PortMan.".to_string()),
+    };
+    #[cfg(windows)]
+    {
+        // Don't flash a console window for the core.
+        use std::os::windows::process::CommandExt;
+        command.creation_flags(0x0800_0000); // CREATE_NO_WINDOW
+    }
+    let mut child = command
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
         .spawn()
-        .map_err(|e| format!("Failed to spawn Python IPC ({}): {}", python.display(), e))?;
+        .map_err(|e| format!("Failed to start PortMan's core ({}): {}", description, e))?;
 
     let stderr = child.stderr.take().ok_or("No stderr pipe")?;
     thread::spawn(move || {

@@ -84,6 +84,15 @@ jobs:
           cache: npm
           cache-dependency-path: portman/gui/package-lock.json
 
+      # The GUI bundles the Python core as one executable (PyInstaller), built by
+      # scripts/build-core.sh before the Tauri build, so users don't need Python.
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Python build tools
+        run: python -m pip install pyinstaller psutil
+
       - uses: dtolnay/rust-toolchain@stable
 
       - uses: Swatinem/rust-cache@v2

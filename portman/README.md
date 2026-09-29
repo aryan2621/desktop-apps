@@ -35,15 +35,15 @@ Or download pre-built binaries from releases.
 
 ### GUI (Tauri + Python Core)
 
+The GUI ships the Python core as one executable (built with PyInstaller by `scripts/build-core.sh`), so installed apps don't need Python. Building it needs [uv](https://docs.astral.sh/uv/):
+
 ```bash
-# GUI requires Python core for port detection (install uv: https://docs.astral.sh/uv/)
-cd portman
-make python
-cd gui
+cd portman/gui
 npm install
-cd src-tauri
-cargo build --release
+npm run tauri build   # builds the core, then the app
 ```
+
+Set `PORTMAN_PYTHON=1` to run the Python sources instead of the bundled core while working on it.
 
 ## CLI Usage
 
