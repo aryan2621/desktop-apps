@@ -1,0 +1,53 @@
+"""Well-known port to service name mappings."""
+
+KNOWN_PORTS = {
+    20: "FTP Data",
+    21: "FTP",
+    22: "SSH",
+    23: "Telnet",
+    25: "SMTP",
+    53: "DNS",
+    80: "HTTP",
+    110: "POP3",
+    143: "IMAP",
+    443: "HTTPS",
+    465: "SMTPS",
+    587: "SMTP Submission",
+    993: "IMAPS",
+    995: "POP3S",
+    1433: "MS SQL Server",
+    1521: "Oracle",
+    1723: "PPTP",
+    2181: "ZooKeeper",
+    2375: "Docker",
+    2376: "Docker TLS",
+    3000: "Dev Server",
+    3306: "MySQL",
+    3360: "MariaDB",
+    3389: "RDP",
+    4200: "Angular Dev",
+    4369: "Erlang EPMD",
+    5000: "Flask/Dev",
+    5432: "PostgreSQL",
+    5500: "VNC",
+    5601: "Kibana",
+    5672: "RabbitMQ",
+    5900: "VNC Server",
+    5984: "CouchDB",
+    6379: "Redis",
+    6443: "Kubernetes API",
+    8000: "Django/Dev",
+    8080: "HTTP Alt",
+    8081: "HTTP Alt 2",
+    8443: "HTTPS Alt",
+    9200: "Elasticsearch",
+    9092: "Kafka",
+    27017: "MongoDB",
+    27018: "MongoDB Shard",
+    27019: "MongoDB Config",
+}
+
+
+def get_service_tag(port: int) -> str | None:
+    """Get service tag for a port number."""
+    return KNOWN_PORTS.get(port)

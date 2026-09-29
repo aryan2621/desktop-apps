@@ -1,0 +1,25 @@
+# OS / editors
+.DS_Store
+.idea/
+*.swp
+
+# Node
+node_modules/
+dist/
+*.log
+
+# Rust / Tauri
+target/
+**/src-tauri/gen/schemas/
+
+# Swift helper (Capturita)
+.build/
+
+# Python (PortMan core)
+.venv/
+__pycache__/
+*.egg-info/
+
+# Go build output (PortMan CLI)
+portman/cli/portman
+portman/cli/dist/

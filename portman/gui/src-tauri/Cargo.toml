@@ -1,0 +1,22 @@
+[package]
+name = "portman"
+version = "1.0.0"
+description = "PortMan - Cross-platform port manager"
+authors = ["PortMan Team"]
+license = "MIT"
+repository = ""
+edition = "2021"
+rust-version = "1.70"
+
+[build-dependencies]
+tauri-build = { version = "1.5.0", features = [] }
+
+[dependencies]
+tauri = { version = "1.5.0", features = [ "dialog-all", "shell-open", "system-tray"] }
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+auto-launch = "0.5"
+
+[features]
+default = ["custom-protocol"]
+custom-protocol = ["tauri/custom-protocol"]
