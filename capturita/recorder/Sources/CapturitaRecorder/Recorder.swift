@@ -50,7 +50,10 @@ final class Recorder: NSObject {
 
         // Windows on other Spaces can be recorded too, so look them up among all windows.
         let content = try await SCShareableContent.excludingDesktopWindows(false, onScreenWindowsOnly: false)
-        let excludedApps = content.applications.filter { Sources.ownProcessIDs.contains($0.processID) }
+        // Capturita normally keeps itself out of recordings. With CAPTURITA_KEEP_WINDOW set (filming
+        // Capturita itself, e.g. for its demo video) its windows are recorded too.
+        let filmSelf = ProcessInfo.processInfo.environment["CAPTURITA_KEEP_WINDOW"] != nil
+        let excludedApps = filmSelf ? [] : content.applications.filter { Sources.ownProcessIDs.contains($0.processID) }
 
         let filter: SCContentFilter
         let configuration = SCStreamConfiguration()

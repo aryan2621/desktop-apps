@@ -42,7 +42,22 @@ export interface TextOverlay {
     bold: boolean;
     background: 'none' | 'box';
     font: FontKey;
+    /** How the text enters and leaves. */
+    animation: TextAnimation;
 }
+
+export type TextAnimation = 'none' | 'fade' | 'rise' | 'pop' | 'slide' | 'blur' | 'typewriter' | 'words';
+
+export const TEXT_ANIMATIONS: { value: TextAnimation; label: string; hint: string }[] = [
+    { value: 'none', label: 'None', hint: 'Appears and disappears instantly' },
+    { value: 'fade', label: 'Fade', hint: 'Fades in and out' },
+    { value: 'rise', label: 'Rise', hint: 'Fades in while rising a little' },
+    { value: 'pop', label: 'Pop', hint: 'Springs in from smaller' },
+    { value: 'slide', label: 'Slide', hint: 'Slides in from the left' },
+    { value: 'blur', label: 'Blur', hint: 'Comes into focus from a blur' },
+    { value: 'typewriter', label: 'Type', hint: 'Types out letter by letter' },
+    { value: 'words', label: 'Words', hint: 'Reveals one word at a time' },
+];
 
 export type FontKey = 'system' | 'rounded' | 'serif' | 'mono' | 'avenir' | 'futura' | 'georgia' | 'marker';
 
@@ -72,7 +87,23 @@ export interface AudioMix {
     /** Seconds of fade at the start and end of the whole video. */
     fadeIn: number;
     fadeOut: number;
+    /** Background music, played along the edited timeline. */
+    music: MusicTrack | null;
 }
+
+/** A song copied into the project folder. */
+export interface MusicTrack extends TrackLevel {
+    /** File name inside the project folder (music.mp3, …). */
+    file: string;
+    /** The original file name, for display. */
+    name: string;
+    /** Start this many seconds into the song. */
+    offset: number;
+    /** Repeat the song if the video is longer. */
+    loop: boolean;
+}
+
+export const DEFAULT_MUSIC_VOLUME = 0.35;
 
 /** A stretch of the recording shown zoomed in. Times are source times, so cuts don't move it. */
 export interface Zoom {
@@ -181,7 +212,7 @@ export function defaultEdit(project: Project): Edit {
         zooms: [],
         zoomScale: DEFAULT_ZOOM_SCALE,
         texts: [],
-        audio: { system: { volume: 1, muted: false }, microphone: { volume: 1, muted: false }, fadeIn: 0, fadeOut: 0 },
+        audio: { system: { volume: 1, muted: false }, microphone: { volume: 1, muted: false }, fadeIn: 0, fadeOut: 0, music: null },
     };
 }
 
@@ -198,13 +229,14 @@ export function normalizeEdit(project: Project, raw: unknown): Edit {
     delete (edit.cursor as Partial<{ clickEffect: boolean }>).clickEffect;
     edit.zoomScale = edit.zoomScale || DEFAULT_ZOOM_SCALE;
     edit.texts = Array.isArray(edit.texts)
-        ? edit.texts.filter((t) => t.end - t.start >= MIN_ZOOM / 2).map((t) => ({ ...t, font: t.font ?? 'system' }))
+        ? edit.texts.filter((t) => t.end - t.start >= MIN_ZOOM / 2).map((t) => ({ ...t, font: t.font ?? 'system', animation: t.animation ?? 'rise' }))
         : [];
     edit.audio = {
         ...base.audio,
         ...edit.audio,
         system: { ...base.audio.system, ...edit.audio?.system },
         microphone: { ...base.audio.microphone, ...edit.audio?.microphone },
+        music: edit.audio?.music ?? null,
     };
     edit.crop = { ...base.crop, ...edit.crop };
     edit.zooms = Array.isArray(edit.zooms) ? edit.zooms.filter((z) => z.end - z.start >= MIN_ZOOM / 2) : [];
@@ -398,10 +430,82 @@ export function timedSegments<T extends TimedItem>(clips: Clip[], items: T[]) {
 
 export const TEXT_FADE = 0.3;
 
-/** 0 → 1 → 0 opacity of a text over its lifetime, with short fades at both ends. */
+const clamp01 = (x: number) => Math.max(0, Math.min(1, x));
+const easeOutCubic = (x: number) => 1 - (1 - x) ** 3;
+/** Overshoots slightly before settling, for a springy "pop". */
+const easeOutBack = (x: number) => 1 + 2.2 * (x - 1) ** 3 + 1.2 * (x - 1) ** 2;
+
+/** Where a text is in its animation at time `t` (source seconds). */
+export interface TextFrame {
+    /** Overall opacity. */
+    alpha: number;
+    /** Offset as a fraction of the font size (x) and of the font size (y). */
+    dx: number;
+    dy: number;
+    scale: number;
+    /** Blur radius as a fraction of the font size. */
+    blur: number;
+    /** 0 → 1: share of characters (typewriter) or words (words) revealed. */
+    reveal: number;
+    /** Typewriter caret is shown while typing. */
+    caret: boolean;
+}
+
+/** Time to type or reveal a text: proportional to its length, but at most 60% of its duration. */
+function revealDuration(text: TextOverlay) {
+    const units = text.animation === 'words' ? text.text.split(/\s+/).filter(Boolean).length : text.text.length;
+    const perUnit = text.animation === 'words' ? 0.18 : 0.045;
+    return Math.min(units * perUnit, (text.end - text.start) * 0.6, 3);
+}
+
+export function textFrame(text: TextOverlay, t: number): TextFrame {
+    const frame: TextFrame = { alpha: 0, dx: 0, dy: 0, scale: 1, blur: 0, reveal: 1, caret: false };
+    if (t < text.start || t > text.end) return frame;
+    const length = text.end - text.start;
+    const fade = Math.min(TEXT_FADE, length / 2);
+    const enter = clamp01((t - text.start) / fade);
+    const exit = clamp01((text.end - t) / fade);
+    const both = Math.min(smoothstep(enter), smoothstep(exit));
+    frame.alpha = both;
+    switch (text.animation) {
+        case 'none':
+            frame.alpha = 1;
+            break;
+        case 'fade':
+            break;
+        case 'rise':
+            frame.dy = (1 - both) * 0.25;
+            break;
+        case 'pop': {
+            const pop = clamp01((t - text.start) / Math.min(0.45, length / 2));
+            frame.alpha = Math.min(clamp01(pop * 2), smoothstep(exit));
+            frame.scale = enter < 1 ? 0.6 + 0.4 * easeOutBack(pop) : 1 - (1 - exit) * 0.08;
+            break;
+        }
+        case 'slide': {
+            const slide = clamp01((t - text.start) / Math.min(0.5, length / 2));
+            frame.dx = -(1 - easeOutCubic(slide)) * 1.2;
+            frame.alpha = Math.min(clamp01(slide * 1.6), smoothstep(exit));
+            break;
+        }
+        case 'blur':
+            frame.blur = (1 - both) * 0.35;
+            break;
+        case 'typewriter':
+        case 'words': {
+            const duration = revealDuration(text);
+            frame.reveal = duration > 0 ? clamp01((t - text.start) / duration) : 1;
+            frame.alpha = smoothstep(exit);
+            frame.caret = text.animation === 'typewriter' && frame.reveal < 1;
+            break;
+        }
+    }
+    return frame;
+}
+
+/** 0 → 1 → 0 visibility of a text over its lifetime (used for hit-testing and the timeline). */
 export function textAmount(text: TextOverlay, t: number) {
-    const fade = Math.min(TEXT_FADE, (text.end - text.start) / 2);
-    return Math.min(smoothstep((t - text.start) / fade), smoothstep((text.end - t) / fade));
+    return textFrame(text, t).alpha;
 }
 
 // ---- Snapping ----

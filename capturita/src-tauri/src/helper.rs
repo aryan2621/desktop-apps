@@ -79,6 +79,11 @@ fn spawn(app: &AppHandle) -> Result<CommandChild, String> {
     let (mut events, child) = app
         .shell()
         .sidecar("capturita-recorder")
+        // Pass the "film Capturita itself" switch on to the capture helper.
+        .map(|command| match std::env::var("CAPTURITA_KEEP_WINDOW") {
+            Ok(value) => command.env("CAPTURITA_KEEP_WINDOW", value),
+            Err(_) => command,
+        })
         .and_then(|command| command.spawn())
         .map_err(|e| format!("Could not start the recorder: {e}"))?;
 

@@ -277,7 +277,7 @@ export function EditorView({ project, onClose }: { project: Project; onClose: ()
             toast.info('This clip is too short for text.');
             return;
         }
-        const text: TextOverlay = { id: newId(), start, end, text: 'Your text', x: 0.5, y: 0.18, size: 0.07, color: '#ffffff', bold: true, background: 'none', font: 'system' };
+        const text: TextOverlay = { id: newId(), start, end, text: 'Your text', x: 0.5, y: 0.18, size: 0.07, color: '#ffffff', bold: true, background: 'none', font: 'system', animation: 'rise' };
         setTexts([...edit.texts, text].sort((a, b) => a.start - b.start));
         select('text', text.id);
         playback.seek(Math.min(playback.total, playback.now() + TEXT_FADE));
@@ -631,6 +631,7 @@ export function EditorView({ project, onClose }: { project: Project; onClose: ()
                         onTextDelete={deleteText}
                         hasSystemAudio={!!project.tracks.systemAudio}
                         hasMicrophone={!!project.tracks.microphone}
+                        projectId={project.id}
                     />
                 </aside>
             </div>

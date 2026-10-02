@@ -44,6 +44,7 @@ pub fn run() {
             recording::delete_recording,
             recording::load_edit,
             recording::save_edit,
+            recording::import_music,
             recording::recordings_dir,
             recording::restart_app,
             recording::log_debug,

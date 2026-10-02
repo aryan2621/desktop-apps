@@ -1,5 +1,5 @@
 import type { CursorData, Project } from '../lib/api';
-import { fontStack, textAmount, zoomAmount, type Background, type CursorShape, type Edit, type NormalizedRect, type TextOverlay } from './model';
+import { fontStack, textFrame, zoomAmount, type TextFrame, type Background, type CursorShape, type Edit, type NormalizedRect, type TextOverlay } from './model';
 
 /** Cursor height in screen points before scaling. */
 const CURSOR_POINTS = 22;
@@ -220,8 +220,8 @@ export function drawFrame(ctx: CanvasRenderingContext2D, width: number, height: 
     }
 
     for (const text of edit.texts) {
-        const amount = textAmount(text, time);
-        if (amount > 0 && text.text.trim()) drawText(ctx, text, width, height, amount);
+        const frame = textFrame(text, time);
+        if (frame.alpha > 0 && text.text.trim()) drawText(ctx, text, width, height, frame);
     }
 
     ctx.restore();
@@ -251,12 +251,19 @@ export function measureText(ctx: CanvasRenderingContext2D, text: TextOverlay, wi
     };
 }
 
-function drawText(ctx: CanvasRenderingContext2D, text: TextOverlay, width: number, height: number, amount: number) {
+function drawText(ctx: CanvasRenderingContext2D, text: TextOverlay, width: number, height: number, frame: TextFrame) {
     const { fontSize, lines, lineHeight, box, pad } = measureText(ctx, text, width, height);
+    const cx = box.x + box.width / 2;
+    const cy = box.y + box.height / 2;
     ctx.save();
-    ctx.globalAlpha = amount;
-    // Rise slightly while fading in and out.
-    ctx.translate(0, (1 - amount) * fontSize * 0.25);
+    ctx.globalAlpha = frame.alpha;
+    ctx.translate(frame.dx * fontSize, frame.dy * fontSize);
+    if (frame.scale !== 1) {
+        ctx.translate(cx, cy);
+        ctx.scale(frame.scale, frame.scale);
+        ctx.translate(-cx, -cy);
+    }
+    if (frame.blur > 0.001) ctx.filter = `blur(${(frame.blur * fontSize).toFixed(2)}px)`;
     if (text.background === 'box') {
         ctx.fillStyle = 'rgba(12, 12, 16, 0.72)';
         ctx.beginPath();
@@ -268,11 +275,50 @@ function drawText(ctx: CanvasRenderingContext2D, text: TextOverlay, width: numbe
         ctx.shadowOffsetY = fontSize * 0.05;
     }
     ctx.fillStyle = text.color;
-    ctx.textAlign = 'center';
     ctx.textBaseline = 'middle';
-    lines.forEach((line, index) => {
-        ctx.fillText(line, box.x + box.width / 2, box.y + pad + lineHeight * (index + 0.5));
-    });
+    const lineY = (index: number) => box.y + pad + lineHeight * (index + 0.5);
+
+    if (text.animation === 'typewriter' || text.animation === 'words') {
+        // Lay out the full text first and reveal parts of it in place, so nothing reflows.
+        ctx.textAlign = 'left';
+        const units = text.animation === 'words' ? text.text.split(/\s+/).filter(Boolean).length : text.text.replace(/\n/g, '').length;
+        const shown = frame.reveal * units;
+        let seen = 0;
+        let caretAt: { x: number; y: number } | null = null;
+        lines.forEach((line, index) => {
+            const left = cx - ctx.measureText(line).width / 2;
+            const y = lineY(index);
+            if (text.animation === 'typewriter') {
+                const count = Math.max(0, Math.min(line.length, Math.floor(shown - seen)));
+                ctx.fillText(line.slice(0, count), left, y);
+                if (count < line.length && !caretAt && frame.caret) caretAt = { x: left + ctx.measureText(line.slice(0, count)).width, y };
+                seen += line.length;
+            } else {
+                // Each word fades and rises in over its own slot.
+                let offset = 0;
+                for (const part of line.split(/(\s+)/)) {
+                    if (part.trim()) {
+                        const k = Math.max(0, Math.min(1, shown - seen));
+                        seen += 1;
+                        if (k > 0) {
+                            ctx.save();
+                            ctx.globalAlpha = frame.alpha * k;
+                            ctx.fillText(part, left + offset, y + (1 - k) * fontSize * 0.3);
+                            ctx.restore();
+                        }
+                    }
+                    offset += ctx.measureText(part).width;
+                }
+            }
+        });
+        if (caretAt) {
+            const { x, y } = caretAt;
+            ctx.fillRect(x + fontSize * 0.04, y - fontSize * 0.45, Math.max(1, fontSize * 0.07), fontSize * 0.9);
+        }
+    } else {
+        ctx.textAlign = 'center';
+        lines.forEach((line, index) => ctx.fillText(line, cx, lineY(index)));
+    }
     ctx.restore();
 }
 

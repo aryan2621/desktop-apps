@@ -15,7 +15,7 @@ import {
     type VideoSample,
 } from 'mediabunny';
 import { api, fileUrl, type CursorData, type Project, type VideoTrack } from '../lib/api';
-import { loadAudioTracks, scheduleTimeline } from './audioSchedule';
+import { loadAudioTracks, loadMusic, scheduleTimeline } from './audioSchedule';
 import { loadClickSound } from './clickSound';
 import { aspectRatio, positionAt, totalDuration, type Edit } from './model';
 import { drawFrame, type FrameSource } from './render';
@@ -212,7 +212,8 @@ async function nextSample(frames: AsyncIterator<VideoSample | null>) {
 async function renderAudio(project: Project, edit: Edit, cursor: CursorData | null, total: number): Promise<AudioBuffer | null> {
     const clickTimes = cursor?.clicks.map(([t]) => t) ?? [];
     const hasClicks = edit.cursor.clickSound && clickTimes.length > 0;
-    if (!project.tracks.systemAudio && !project.tracks.microphone && !hasClicks) return null;
+    const music = edit.audio.music;
+    if (!project.tracks.systemAudio && !project.tracks.microphone && !hasClicks && !music) return null;
 
     const context = new OfflineAudioContext(2, Math.max(1, Math.ceil(total * SAMPLE_RATE)), SAMPLE_RATE);
     const tracks = await loadAudioTracks(
@@ -233,6 +234,7 @@ async function renderAudio(project: Project, edit: Edit, cursor: CursorData | nu
             clicks: { enabled: edit.cursor.clickSound, type: edit.cursor.clickSoundType, volume: edit.cursor.clickVolume, times: clickTimes },
             stretched: new Map(),
             clickBuffer: { current: hasClicks ? (await loadClickSound(context, edit.cursor.clickSoundType)).buffer : null },
+            music: music ? await loadMusic(context, fileUrl(project, music.file)) : null,
         },
         0,
         0

@@ -154,6 +154,9 @@ export const api = {
     deleteRecording: (id: string) => invoke<void>('delete_recording', { id }),
     loadEdit: (id: string) => invoke<unknown | null>('load_edit', { id }),
     saveEdit: (id: string, edit: unknown) => invoke<void>('save_edit', { id, edit }),
+    /** Copies a song into the project folder; returns its file name there. */
+    importMusic: async (id: string, file: File) =>
+        invoke<string>('import_music', new Uint8Array(await file.arrayBuffer()), { headers: { id, name: encodeURIComponent(file.name) } }),
     recordingsDir: () => invoke<string>('recordings_dir'),
     restart: () => invoke<void>('restart_app'),
     log: (message: string) => invoke<void>('log_debug', { message }).catch(() => {}),

@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { toast } from 'sonner';
 import { api, fileUrl, type Project, type Track } from '../lib/api';
-import { gainOf, loadAudioTracks, scheduleTimeline, type AudioTrack, type ClickSounds, type TrackKind } from './audioSchedule';
+import { gainOf, loadAudioTracks, loadMusic, scheduleTimeline, type AudioTrack, type ClickSounds, type TrackKind } from './audioSchedule';
 import { positionAt, totalDuration, type AudioMix, type Clip } from './model';
 import { loadClickSound } from './clickSound';
 
@@ -27,6 +27,8 @@ export function usePlayback(project: Project, clips: Clip[], clickSounds: ClickS
     const sourcesRef = useRef<AudioBufferSourceNode[]>([]);
     const masterRef = useRef<GainNode | null>(null);
     const trackGainsRef = useRef(new Map<TrackKind, GainNode>());
+    const musicGainRef = useRef<GainNode | null>(null);
+    const musicRef = useRef<AudioBuffer | null>(null);
     const clockRef = useRef<{ startedAt: number; startTime: number } | null>(null);
     const pausedAtRef = useRef(0);
     const clipsRef = useRef(clips);
@@ -70,6 +72,33 @@ export function usePlayback(project: Project, clips: Clip[], clickSounds: ClickS
         };
     }, [project, systemAudio, microphone]);
 
+    // Decode the background music whenever a different song is chosen.
+    const musicFile = mix.music?.file ?? null;
+    useEffect(() => {
+        const context = contextRef.current;
+        musicRef.current = null;
+        if (!context || !musicFile) {
+            if (clockRef.current) play(now());
+            return;
+        }
+        let cancelled = false;
+        loadMusic(context, `${fileUrl(project, musicFile)}?v=${Date.now()}`)
+            .then((buffer) => {
+                if (cancelled) return;
+                musicRef.current = buffer;
+                if (clockRef.current) play(now());
+            })
+            .catch((error) => {
+                if (cancelled) return;
+                toast.error('Could not load the music file.');
+                api.log(`[editor ${project.id}] music decode failed: ${error}`);
+            });
+        return () => {
+            cancelled = true;
+        };
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [project, musicFile, audio]);
+
     /** Current output time. */
     const now = useCallback(() => {
         const context = contextRef.current;
@@ -84,6 +113,7 @@ export function usePlayback(project: Project, clips: Clip[], clickSounds: ClickS
         masterRef.current?.disconnect();
         masterRef.current = null;
         trackGainsRef.current.clear();
+        musicGainRef.current = null;
     };
 
     const videos = (): [HTMLVideoElement | null, Track | null][] => [
@@ -136,13 +166,14 @@ export function usePlayback(project: Project, clips: Clip[], clickSounds: ClickS
             const scheduled = scheduleTimeline(
                 context,
                 context.destination,
-                { tracks: audio, clips: timeline, mix: mixRef.current, clicks: clickSoundsRef.current, stretched: stretched.current, clickBuffer: clickBufferRef },
+                { tracks: audio, clips: timeline, mix: mixRef.current, clicks: clickSoundsRef.current, stretched: stretched.current, clickBuffer: clickBufferRef, music: musicRef.current },
                 at,
                 start
             );
             sourcesRef.current = scheduled.sources;
             masterRef.current = scheduled.master;
             trackGainsRef.current = scheduled.trackGains;
+            musicGainRef.current = scheduled.musicGain;
             clockRef.current = { startedAt: at, startTime: start };
             lastClipRef.current = -1;
             syncVideos(start, true, true);
@@ -180,7 +211,9 @@ export function usePlayback(project: Project, clips: Clip[], clickSounds: ClickS
         const context = contextRef.current;
         if (!context) return;
         for (const [kind, gain] of trackGainsRef.current) gain.gain.setTargetAtTime(gainOf(mix[kind]), context.currentTime, 0.02);
-        if ((previous.fadeIn !== mix.fadeIn || previous.fadeOut !== mix.fadeOut) && clockRef.current) play(now());
+        if (mix.music && musicGainRef.current) musicGainRef.current.gain.setTargetAtTime(gainOf(mix.music), context.currentTime, 0.02);
+        const musicMoved = previous.music?.offset !== mix.music?.offset || previous.music?.loop !== mix.music?.loop || !!previous.music !== !!mix.music;
+        if ((previous.fadeIn !== mix.fadeIn || previous.fadeOut !== mix.fadeOut || musicMoved) && clockRef.current) play(now());
         // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [mix]);
 

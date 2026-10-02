@@ -223,8 +223,12 @@ pub async fn prepare_recording(app: AppHandle, helper: State<'_, Helper>, option
     *app.state::<Recording>().options.lock().unwrap() = Some(args.clone());
 
     update(&app, |s| s.status = Status::Countdown);
-    if let Some(main) = app.get_webview_window("main") {
-        let _ = main.hide();
+    // Launching with CAPTURITA_KEEP_WINDOW=1 keeps the window on screen while recording,
+    // so Capturita can film itself (e.g. for its own demo video).
+    if std::env::var_os("CAPTURITA_KEEP_WINDOW").is_none() {
+        if let Some(main) = app.get_webview_window("main") {
+            let _ = main.hide();
+        }
     }
 
     match helper.call(&app, "start", args, Some(Duration::from_secs(COUNTDOWN_SECONDS + 30))).await {
@@ -322,6 +326,35 @@ pub fn save_edit(app: AppHandle, id: String, edit: Value) -> Result<(), String> 
     let text = serde_json::to_string_pretty(&edit).map_err(|e| e.to_string())?;
     std::fs::write(&temporary, text).map_err(|e| e.to_string())?;
     std::fs::rename(&temporary, dir.join("edit.json")).map_err(|e| e.to_string())
+}
+
+/// Copies a song into the project folder as `music.<ext>` (replacing any earlier one) so the
+/// project stays self-contained. Body: the file's bytes; headers: `id` and `name`.
+/// Returns the file name inside the project.
+#[tauri::command]
+pub fn import_music(app: AppHandle, request: tauri::ipc::Request<'_>) -> Result<String, String> {
+    let tauri::ipc::InvokeBody::Raw(bytes) = request.body() else {
+        return Err("Expected raw bytes".into());
+    };
+    let header = |key: &str| request.headers().get(key).and_then(|v| v.to_str().ok()).map(str::to_string);
+    let id = header("id").ok_or("Missing id header")?;
+    // The name is URL-encoded by the webview (headers must be ASCII); only its extension matters.
+    let name = header("name").unwrap_or_default().replace("%2E", ".").replace("%2e", ".");
+    let ext = std::path::Path::new(&name)
+        .extension()
+        .and_then(|e| e.to_str())
+        .map(str::to_ascii_lowercase)
+        .filter(|e| ["mp3", "m4a", "aac", "wav", "aif", "aiff", "caf", "flac", "ogg"].contains(&e.as_str()))
+        .ok_or("Choose an audio file (MP3, M4A, AAC, WAV, AIFF, FLAC)")?;
+    let dir = project_dir(&app, &id)?;
+    for entry in std::fs::read_dir(&dir).map_err(|e| e.to_string())?.flatten() {
+        if entry.file_name().to_string_lossy().starts_with("music.") {
+            let _ = std::fs::remove_file(entry.path());
+        }
+    }
+    let file = format!("music.{ext}");
+    std::fs::write(dir.join(&file), bytes).map_err(|e| e.to_string())?;
+    Ok(file)
 }
 
 /// Appends a diagnostic line from the webview to ~/Library/Logs/com.capturita.app/webview.log.

@@ -60,6 +60,9 @@ export function MainWindow() {
     if (editing) {
         return (
             <EditorView
+                // A fresh editor per project: no state (edit, music, dialogs) carries over when a
+                // new recording opens while another project is being edited.
+                key={editing.id}
                 project={editing}
                 onClose={() => {
                     setEditing(null);

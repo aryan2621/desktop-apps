@@ -2,7 +2,8 @@ import { useEffect, useState, type ReactNode } from 'react';
 import { AudioWaveform, Ban, Blend, Bold, Camera, Check, Circle, CircleDot, Crop, Crosshair, Frame, Layers, Mic, MousePointer2, MousePointerClick, PaintBucket, Palette, Pointer, Radio, RotateCcw, Square, Trash2, Type, Volume2, VolumeX, Wand2, ZoomIn } from 'lucide-react';
 import { Button, Select, Slider, Switch, cx } from '../components/ui';
 import { backgroundCss } from './render';
-import { ASPECTS, FONTS, fontStack, GRADIENTS, type CameraCorner, type ClickSoundType, type ClickStyle, type CursorShape, type Edit, type FontKey, type TextOverlay, type TrackLevel, type Zoom } from './model';
+import { MusicPanel } from './MusicPanel';
+import { ASPECTS, FONTS, fontStack, GRADIENTS, TEXT_ANIMATIONS, type CameraCorner, type ClickSoundType, type ClickStyle, type CursorShape, type Edit, type FontKey, type TextOverlay, type TrackLevel, type Zoom } from './model';
 
 interface InspectorProps {
     edit: Edit;
@@ -22,6 +23,7 @@ interface InspectorProps {
     onTextDelete: (id: string) => void;
     hasSystemAudio: boolean;
     hasMicrophone: boolean;
+    projectId: string;
 }
 
 const TEXT_COLORS = ['#ffffff', '#111111', '#7c5cff', '#ffd200', '#ff5c7a', '#38ef7d'];
@@ -50,6 +52,7 @@ export function Inspector({
     onTextDelete,
     hasSystemAudio,
     hasMicrophone,
+    projectId,
 }: InspectorProps) {
     const [tab, setTab] = useState<Tab>('background');
     // Selecting a zoom on the timeline opens its settings.
@@ -69,7 +72,8 @@ export function Inspector({
         { value: 'text', label: 'Text', icon: <Type className='h-4 w-4' /> },
         ...(hasCamera ? [{ value: 'camera' as Tab, label: 'Camera', icon: <Camera className='h-4 w-4' /> }] : []),
         { value: 'cursor', label: 'Cursor', icon: <MousePointer2 className='h-4 w-4' /> },
-        ...(hasSystemAudio || hasMicrophone ? [{ value: 'audio' as Tab, label: 'Audio', icon: <Volume2 className='h-4 w-4' /> }] : []),
+        // Always shown: background music works even on recordings without sound.
+        { value: 'audio', label: 'Audio', icon: <Volume2 className='h-4 w-4' /> },
     ];
     const setLevel = (track: 'system' | 'microphone', level: TrackLevel, key: string) => onChange({ audio: { ...edit.audio, [track]: level } }, key);
     const cropped = edit.crop.x > 0 || edit.crop.y > 0 || edit.crop.width < 1 || edit.crop.height < 1;
@@ -344,6 +348,26 @@ export function Inspector({
                                         </option>
                                     ))}
                                 </Select>
+                                <div className='space-y-1.5'>
+                                    <div className='text-xs text-muted'>Animation</div>
+                                    <div className='grid grid-cols-4 gap-1 rounded-lg bg-panel-2 p-1' role='radiogroup' aria-label='Text animation'>
+                                        {TEXT_ANIMATIONS.map((option) => (
+                                            <button
+                                                key={option.value}
+                                                role='radio'
+                                                aria-checked={selectedText.animation === option.value}
+                                                onClick={() => onTextChange({ ...selectedText, animation: option.value }, 'text-animation')}
+                                                className={cx(
+                                                    'h-7 rounded-md text-xs transition-colors',
+                                                    selectedText.animation === option.value ? 'bg-accent text-white' : 'text-muted hover:bg-line hover:text-fg'
+                                                )}
+                                                title={option.hint}
+                                            >
+                                                {option.label}
+                                            </button>
+                                        ))}
+                                    </div>
+                                </div>
                                 <div className='flex items-start gap-4'>
                                     <div className='grid shrink-0 grid-cols-3 gap-1 rounded-lg bg-panel-2 p-1.5' aria-label='Text position'>
                                         {TEXT_POSITIONS.map((y, row) =>
@@ -483,6 +507,7 @@ export function Inspector({
                                     </div>
                                 );
                             })}
+                        <MusicPanel projectId={projectId} audio={edit.audio} onChange={(audio, key) => onChange({ audio }, key)} />
                         <Slider label='Fade in' value={edit.audio.fadeIn} min={0} max={3} step={0.1} format={(v) => `${v.toFixed(1)} s`} onChange={(fadeIn) => onChange({ audio: { ...edit.audio, fadeIn } }, 'fade-in')} />
                         <Slider label='Fade out' value={edit.audio.fadeOut} min={0} max={3} step={0.1} format={(v) => `${v.toFixed(1)} s`} onChange={(fadeOut) => onChange({ audio: { ...edit.audio, fadeOut } }, 'fade-out')} />
                     </Section>

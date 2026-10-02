@@ -29,6 +29,8 @@ export interface ScheduleOptions {
     stretched: Map<string, AudioBuffer>;
     /** The click sound for this context (the synthesized tick is created if empty). */
     clickBuffer: { current: AudioBuffer | null };
+    /** Decoded background music (settings are in `mix.music`). */
+    music?: AudioBuffer | null;
 }
 
 export interface Scheduled {
@@ -36,6 +38,8 @@ export interface Scheduled {
     /** Carries the fades; disconnect it to silence everything scheduled. */
     master: GainNode;
     trackGains: Map<TrackKind, GainNode>;
+    /** Background music volume, adjustable while playing. */
+    musicGain: GainNode | null;
 }
 
 export const gainOf = (level: TrackLevel) => (level.muted ? 0 : level.volume);
@@ -95,6 +99,29 @@ export function scheduleTimeline(context: BaseAudioContext, destination: AudioNo
         }
     }
 
+    // Music runs along the output timeline, so cuts and speed changes don't affect it.
+    let musicGain: GainNode | null = null;
+    const music = mix.music;
+    if (music && options.music && start < length) {
+        const buffer = options.music;
+        musicGain = context.createGain();
+        musicGain.gain.value = gainOf(music);
+        musicGain.connect(master);
+        const node = context.createBufferSource();
+        node.buffer = buffer;
+        node.connect(musicGain);
+        const into = music.offset + start;
+        const remaining = length - start;
+        if (music.loop) {
+            node.loop = true;
+            node.start(at, into % buffer.duration);
+            node.stop(at + remaining);
+        } else if (into < buffer.duration) {
+            node.start(at, into, Math.min(remaining, buffer.duration - into));
+        }
+        sources.push(node);
+    }
+
     if (clicks.enabled && clicks.volume > 0 && clicks.times.length > 0) {
         options.clickBuffer.current ??= createClickSound(context);
         const gain = context.createGain();
@@ -116,7 +143,7 @@ export function scheduleTimeline(context: BaseAudioContext, destination: AudioNo
         }
     }
 
-    return { sources, master, trackGains };
+    return { sources, master, trackGains, musicGain };
 }
 
 /** Fade in at the start and out at the end of the whole edited video, as a gain automation. */
@@ -126,6 +153,13 @@ function scheduleFades(gain: GainNode, mix: AudioMix, at: number, start: number,
     gain.gain.setValueAtTime(level(start), at);
     const points = [fadeIn, length - fadeOut, length].filter((t) => t > start).sort((a, b) => a - b);
     for (const t of points) gain.gain.linearRampToValueAtTime(level(t), at + (t - start));
+}
+
+/** Fetches and decodes a project's background music file. */
+export async function loadMusic(context: BaseAudioContext, url: string): Promise<AudioBuffer> {
+    const response = await fetch(url);
+    if (!response.ok) throw new Error(`music: HTTP ${response.status}`);
+    return context.decodeAudioData(await response.arrayBuffer());
 }
 
 /** Fetches and decodes the recording's audio tracks. */
