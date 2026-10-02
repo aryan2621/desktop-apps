@@ -52,6 +52,68 @@ jobs:
           path: capturita/src-tauri/target/release/bundle/dmg/*.dmg
           if-no-files-found: error
 
+  murmur:
+    name: Murmur (${{ matrix.name }})
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: macOS
+            os: macos-15
+            bundles: app,dmg
+            experimental: false
+          # The Windows port has never been built before; keep it from failing the workflow.
+          - name: Windows
+            os: windows-latest
+            bundles: nsis
+            experimental: true
+    runs-on: ${{ matrix.os }}
+    continue-on-error: ${{ matrix.experimental }}
+    defaults:
+      run:
+        working-directory: murmur
+    steps:
+      - uses: actions/checkout@v5
+
+      # pnpm version comes from "packageManager" in murmur/package.json.
+      - uses: pnpm/action-setup@v4
+        with:
+          package_json_file: murmur/package.json
+
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 22
+          cache: pnpm
+          cache-dependency-path: murmur/pnpm-lock.yaml
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: murmur/src-tauri
+
+      # whisper.cpp is compiled from source by whisper-rs (CMake + clang, Metal on macOS).
+      - name: Tool versions
+        shell: bash
+        run: cmake --version | head -1 && rustc --version && node --version && pnpm --version
+
+      - run: pnpm install --frozen-lockfile
+
+      - run: pnpm typecheck
+
+      # CI has no "Capturita Dev" certificate, so the macOS app is ad-hoc signed ("-").
+      - name: Build app
+        shell: bash
+        run: pnpm tauri build --bundles ${{ matrix.bundles }} --config '{"bundle":{"macOS":{"signingIdentity":"-"}}}'
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: murmur-${{ runner.os }}
+          path: |
+            murmur/src-tauri/target/release/bundle/dmg/*.dmg
+            murmur/src-tauri/target/release/bundle/nsis/*.exe
+          if-no-files-found: error
+
   portman-gui:
     name: PortMan GUI (${{ matrix.name }})
     strategy:
@@ -157,7 +219,7 @@ jobs:
   release:
     name: GitHub Release
     if: startsWith(github.ref, 'refs/tags/v')
-    needs: [capturita, portman-gui, portman-cli]
+    needs: [capturita, murmur, portman-gui, portman-cli]
     runs-on: ubuntu-latest
     permissions:
       contents: write
