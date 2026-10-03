@@ -94,9 +94,9 @@ export function CaptionsPanel({
         setProgress({ phase: modelMb ? 'download' : 'load', progress: 0 });
         try {
             const made = await makeCaptions(project, captions.language, sourceKinds(sources));
-            onChange({ ...captions, items: made, visible: true }, 'captions-generate');
+            onChange({ ...captions, items: made.items, fillers: made.fillers, visible: true }, 'captions-generate');
             setModelMb(null);
-            toast.success(made.length ? `${made.length} captions made — check them below` : 'No speech found in this recording');
+            toast.success(made.items.length ? `${made.items.length} captions made — check them below` : 'No speech found in this recording');
         } catch (error) {
             const message = errorMessage(error);
             if (message !== 'Cancelled') toast.error(message);

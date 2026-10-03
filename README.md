@@ -2,7 +2,7 @@
 
 Four Tauri desktop apps.
 
-- **[Capturita](capturita/)** — macOS screen recorder and editor: auto-zoom, trim, text, export to MP4, upload to YouTube/Drive.
+- **[Capturita](capturita/)** — macOS screen recorder and editor: auto-zoom, trim, text, captions, hiding private info, AI editing by prompt (all on-device), export to MP4, upload to YouTube/Drive.
 - **[Murmur](murmur/)** — private, on-device voice dictation for macOS: hold Fn, speak, and the text is typed where your cursor is. Whisper runs locally; nothing leaves your Mac.
 - **[Jarvis](jarvis/)** — private, on-device voice assistant for macOS: hold Right Option to ask, tap it for a hands-free conversation. Whisper, a built-in AI model (llama.cpp) and the macOS voice answer out loud; nothing leaves your Mac.
 - **[PortMan](portman/)** — see and kill processes on your ports, as a CLI or a desktop GUI (macOS, Linux, Windows).

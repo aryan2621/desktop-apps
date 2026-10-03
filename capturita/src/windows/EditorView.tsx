@@ -734,6 +734,8 @@ export function EditorView({ project, onClose }: { project: Project; onClose: ()
                         onSelectCaption={selectCaption}
                         onCaptionsChange={setCaptions}
                         onSeekSource={(source) => playback.seek(outputTimeAt(source))}
+                        cursor={cursor}
+                        onReplaceEdit={(next, key) => history.set(() => next, key)}
                     />
                 </aside>
             </div>

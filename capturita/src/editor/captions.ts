@@ -1,6 +1,6 @@
 import { api, fileUrl, type Project } from '../lib/api';
 import { loadAudioTracks, type TrackKind } from './audioSchedule';
-import { groupCaptions, type Caption } from './model';
+import { FILLER, groupCaptions, type Caption, type CaptionWord } from './model';
 
 const WHISPER_RATE = 16_000;
 
@@ -33,9 +33,9 @@ export function speechSources(project: Project): TrackKind[] {
     return kinds;
 }
 
-/** Transcribes the recording and groups the words into captions. */
-export async function makeCaptions(project: Project, language: string, sources: TrackKind[]): Promise<Caption[]> {
+/** Transcribes the recording and groups the words into captions; the filler words left out are returned too. */
+export async function makeCaptions(project: Project, language: string, sources: TrackKind[]): Promise<{ items: Caption[]; fillers: CaptionWord[] }> {
     const audio = await speechAudio(project, sources);
     const words = await api.transcribe(audio, language);
-    return groupCaptions(words);
+    return { items: groupCaptions(words), fillers: words.filter((w) => FILLER.test(w.text.trim())) };
 }

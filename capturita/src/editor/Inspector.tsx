@@ -1,11 +1,12 @@
 import { useEffect, useState, type ReactNode } from 'react';
-import { AudioWaveform, Ban, Captions as CaptionsIcon, EyeOff, Blend, Bold, Camera, Check, Circle, CircleDot, Crop, Crosshair, Frame, Layers, Mic, MousePointer2, MousePointerClick, PaintBucket, Palette, Pointer, Radio, RotateCcw, Square, Trash2, Type, Volume2, VolumeX, Wand2, ZoomIn } from 'lucide-react';
+import { AudioWaveform, Ban, Captions as CaptionsIcon, EyeOff, Sparkles, Blend, Bold, Camera, Check, Circle, CircleDot, Crop, Crosshair, Frame, Layers, Mic, MousePointer2, MousePointerClick, PaintBucket, Palette, Pointer, Radio, RotateCcw, Square, Trash2, Type, Volume2, VolumeX, Wand2, ZoomIn } from 'lucide-react';
 import { Button, Select, Slider, Switch, cx } from '../components/ui';
 import { backgroundCss } from './render';
 import { MusicPanel } from './MusicPanel';
 import { HidePanel } from './HidePanel';
 import { CaptionsPanel } from './CaptionsPanel';
-import type { Project } from '../lib/api';
+import { AiPanel } from './AiPanel';
+import type { CursorData, Project } from '../lib/api';
 import { ASPECTS, FONTS, fontStack, GRADIENTS, TEXT_ANIMATIONS, type CameraCorner, type Captions, type ClickSoundType, type ClickStyle, type CursorShape, type Edit, type FontKey, type HideRegion, type TextOverlay, type TrackLevel, type Zoom } from './model';
 
 interface InspectorProps {
@@ -38,6 +39,9 @@ interface InspectorProps {
     onCaptionsChange: (captions: Captions, key: string) => void;
     /** Jump to a source time. */
     onSeekSource: (source: number) => void;
+    cursor: CursorData | null;
+    /** Replaces the whole edit in one undo step (AI editing). */
+    onReplaceEdit: (next: Edit, key: string) => void;
 }
 
 const TEXT_COLORS = ['#ffffff', '#111111', '#7c5cff', '#ffd200', '#ff5c7a', '#38ef7d'];
@@ -46,7 +50,7 @@ const TEXT_POSITIONS = [0.12, 0.5, 0.88];
 const TEXT_ROWS = ['Top', 'Middle', 'Bottom'];
 const TEXT_COLUMNS = ['left', 'centre', 'right'];
 
-type Tab = 'background' | 'frame' | 'layout' | 'zoom' | 'text' | 'hide' | 'captions' | 'camera' | 'cursor' | 'audio';
+type Tab = 'ai' | 'background' | 'frame' | 'layout' | 'zoom' | 'text' | 'hide' | 'captions' | 'camera' | 'cursor' | 'audio';
 
 export function Inspector({
     edit,
@@ -77,6 +81,8 @@ export function Inspector({
     onSelectCaption,
     onCaptionsChange,
     onSeekSource,
+    cursor,
+    onReplaceEdit,
 }: InspectorProps) {
     const [tab, setTab] = useState<Tab>('background');
     // Selecting a zoom on the timeline opens its settings.
@@ -96,6 +102,7 @@ export function Inspector({
         if (selectedCaptionId) setTab('captions');
     }, [selectedCaptionId]);
     const tabs: { value: Tab; label: string; icon: ReactNode }[] = [
+        { value: 'ai', label: 'AI editing', icon: <Sparkles className='h-4 w-4' /> },
         { value: 'background', label: 'Background', icon: <Palette className='h-4 w-4' /> },
         { value: 'frame', label: 'Frame', icon: <Frame className='h-4 w-4' /> },
         { value: 'layout', label: 'Layout & crop', icon: <Crop className='h-4 w-4' /> },
@@ -691,6 +698,8 @@ export function Inspector({
                         onDelete={onHideDelete}
                     />
                 )}
+
+                {tab === 'ai' && <AiPanel project={project} edit={edit} cursor={cursor} onApply={onReplaceEdit} onSeek={onSeekSource} />}
 
                 {tab === 'captions' && (
                     <CaptionsPanel

@@ -168,6 +168,10 @@ export const api = {
     restart: () => invoke<void>('restart_app'),
     log: (message: string) => invoke<void>('log_debug', { message }).catch(() => {}),
 
+    aiModel: () => invoke<{ downloaded: boolean; sizeMb: number }>('ai_model_status'),
+    /** Downloads the AI editing model once (progress: `ai-progress` events, 0–1). */
+    downloadAiModel: () => invoke<void>('download_ai_model'),
+    cancelAiDownload: () => invoke<void>('cancel_ai_download'),
     captionModel: () => invoke<{ downloaded: boolean; sizeMb: number }>('caption_model_status'),
     /** Transcribes 16 kHz mono audio into timed words (progress: `captions-progress` events). */
     transcribe: (audio: Float32Array, language: string) =>

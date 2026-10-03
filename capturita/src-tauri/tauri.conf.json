@@ -4,9 +4,9 @@
   "version": "0.1.0",
   "identifier": "com.capturita.app",
   "build": {
-    "beforeDevCommand": "npm run build:recorder && npm run dev",
+    "beforeDevCommand": "npm run build:recorder && ./scripts/build-llama-server.sh && npm run dev",
     "devUrl": "http://localhost:1420",
-    "beforeBuildCommand": "npm run build:recorder && npm run build",
+    "beforeBuildCommand": "npm run build:recorder && ./scripts/build-llama-server.sh && npm run build",
     "frontendDist": "../dist"
   },
   "app": {
@@ -34,7 +34,8 @@
     "active": true,
     "targets": "all",
     "externalBin": [
-      "binaries/capturita-recorder"
+      "binaries/capturita-recorder",
+      "binaries/llama-server"
     ],
     "macOS": {
       "minimumSystemVersion": "15.0",

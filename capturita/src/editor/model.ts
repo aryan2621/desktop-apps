@@ -87,6 +87,8 @@ export interface Captions {
     language: string;
     style: CaptionStyle;
     items: Caption[];
+    /** "um"/"uh" left out of the captions, kept with their timings so they can be cut out. */
+    fillers?: CaptionWord[];
 }
 
 export const DEFAULT_CAPTION_STYLE: CaptionStyle = {
@@ -615,7 +617,7 @@ const CAPTION_CHARS = 42;
 const CAPTION_GAP = 0.7;
 const CAPTION_MAX_SECONDS = 5;
 /** Hesitations dropped from captions. */
-const FILLER = /^(u+[hm]+|e+r+m*|hm+|mm+)[,.!?]*$/i;
+export const FILLER = /^(u+[hm]+|e+r+m*|hm+|mm+)[,.!?]*$/i;
 
 /**
  * Groups transcribed words into captions the way subtitles are usually cut: at most ~two short
@@ -683,4 +685,39 @@ export function toSrt(clips: Clip[], captions: Caption[]) {
         .filter((s) => s.to - s.from >= 0.2 && s.item.text.trim())
         .sort((a, b) => a.from - b.from);
     return cues.map((s, i) => `${i + 1}\n${srtTime(s.from)} --> ${srtTime(s.to)}\n${s.item.text.trim()}\n`).join('\n');
+}
+
+// ---- Edits in source time (used by AI editing) ----
+
+/** Removes source time a..b from the kept clips. Returns the clips unchanged if nothing would be left. */
+export function cutSource(clips: Clip[], a: number, b: number): Clip[] {
+    const out: Clip[] = [];
+    for (const clip of clips) {
+        if (b <= clip.start || a >= clip.end) {
+            out.push(clip);
+            continue;
+        }
+        const keepLeft = a - clip.start >= MIN_CLIP / 2;
+        if (keepLeft) out.push({ ...clip, end: a });
+        if (clip.end - b >= MIN_CLIP / 2) out.push({ ...clip, id: keepLeft ? newId() : clip.id, start: b });
+    }
+    return out.length > 0 ? out : clips;
+}
+
+/** Plays source time a..b at `speed`, splitting the clips around it. */
+export function speedSource(clips: Clip[], a: number, b: number, speed: number): Clip[] {
+    const out: Clip[] = [];
+    for (const clip of clips) {
+        if (b <= clip.start || a >= clip.end) {
+            out.push(clip);
+            continue;
+        }
+        const from = Math.max(a, clip.start);
+        const to = Math.min(b, clip.end);
+        const keepLeft = from - clip.start >= MIN_CLIP / 2;
+        if (keepLeft) out.push({ ...clip, end: from });
+        out.push({ ...clip, id: keepLeft ? newId() : clip.id, start: keepLeft ? from : clip.start, end: clip.end - to < MIN_CLIP / 2 ? clip.end : to, speed });
+        if (clip.end - to >= MIN_CLIP / 2) out.push({ ...clip, id: newId(), start: to });
+    }
+    return out;
 }

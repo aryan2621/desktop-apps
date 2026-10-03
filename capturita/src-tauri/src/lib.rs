@@ -1,9 +1,11 @@
+mod ai;
 mod captions;
 mod export;
 mod google;
 mod helper;
 mod recording;
 
+use tauri::Manager;
 use tauri_plugin_global_shortcut::{Code, GlobalShortcutExt, Modifiers, Shortcut, ShortcutState};
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
@@ -28,10 +30,17 @@ pub fn run() {
         .manage(export::Export::default())
         .manage(google::Google::default())
         .manage(captions::Captions::default())
+        .manage(ai::Ai::default())
         .setup(move |app| {
             if let Err(error) = app.global_shortcut().register(record_shortcut) {
                 eprintln!("Could not register the ⌘⇧R shortcut: {error}");
             }
+            // Give the AI model's memory back when it hasn't been used for a while.
+            let handle = app.handle().clone();
+            std::thread::spawn(move || loop {
+                std::thread::sleep(std::time::Duration::from_secs(60));
+                handle.state::<ai::Ai>().stop_if_idle();
+            });
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
@@ -50,6 +59,10 @@ pub fn run() {
             recording::recordings_dir,
             recording::restart_app,
             recording::log_debug,
+            ai::ai_model_status,
+            ai::download_ai_model,
+            ai::cancel_ai_download,
+            ai::ai_edit,
             captions::caption_model_status,
             captions::transcribe,
             captions::download_caption_model,
@@ -65,6 +78,12 @@ pub fn run() {
             google::google_upload,
             google::google_cancel_upload,
         ])
-        .run(tauri::generate_context!())
-        .expect("error while running tauri application");
+        .build(tauri::generate_context!())
+        .expect("error while running tauri application")
+        .run(|app, event| {
+            // Never leave the AI running (and holding memory) after Capturita quits.
+            if let tauri::RunEvent::Exit = event {
+                app.state::<ai::Ai>().stop();
+            }
+        });
 }

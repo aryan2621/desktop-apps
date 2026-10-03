@@ -16,6 +16,10 @@ upload it straight to YouTube or Google Drive.
   keys, chats) for as long as you choose. Boxes stay on the content while zooming and are baked
   into every export; the original recording is never changed.
 - **Audio**: volume per track, fade in/out, background music.
+- **AI editing**: describe an edit — "cut the part about pricing", "speed up where nothing
+  happens", "add a title" — and a small AI model on this Mac (Qwen3 4B on a bundled llama.cpp
+  server; downloads once, 2.4 GB) proposes cuts, speed-ups, zooms and titles to review and apply.
+  One-click clean-ups remove filler words and long pauses.
 - **Share**: export to MP4, upload to YouTube or Google Drive.
 
 ## Run
