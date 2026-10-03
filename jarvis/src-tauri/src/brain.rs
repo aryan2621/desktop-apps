@@ -135,14 +135,17 @@ impl LocalServer {
 
     fn chat(&self, messages: &[Message], mut on_text: impl FnMut(&str) -> bool) -> Result<()> {
         let port = self.ensure()?;
-        // Sampling settings Qwen recommends for its instruct models.
+        // Sampling settings Qwen recommends for its instruct models, including the presence
+        // penalty it suggests against endless repetition. Spoken answers are short, so the
+        // length cap also bounds how long a reply that goes wrong can ramble.
         let body = json!({
             "messages": messages,
             "stream": true,
             "temperature": 0.7,
             "top_p": 0.8,
             "top_k": 20,
-            "max_tokens": 700,
+            "presence_penalty": 1.0,
+            "max_tokens": 350,
         });
         let resp = self.client.post(format!("http://127.0.0.1:{port}/v1/chat/completions")).json(&body).send()?;
         if !resp.status().is_success() {

@@ -183,6 +183,52 @@ impl SentenceSplitter {
     }
 }
 
+/// Small local models sometimes get stuck going round in circles ("… — no. Actually, it's …
+/// — no."). Watches the streamed reply and reports when any sentence comes round a third time.
+#[derive(Default)]
+pub struct LoopGuard {
+    buf: String,
+    /// Bytes of the reply already split off into `seen`.
+    consumed: usize,
+    /// Each normalised sentence: (times seen, byte offset in the reply where it first appeared).
+    seen: std::collections::HashMap<String, (u32, usize)>,
+}
+
+impl LoopGuard {
+    const REPEATS: u32 = 3;
+    /// Fragments shorter than this ("no", "1", "e.g") repeat naturally.
+    const MIN_CHARS: usize = 8;
+
+    /// Adds streamed text. Returns the byte offset in the reply where the loop began once the
+    /// reply is repeating itself; everything from there on is noise.
+    pub fn push(&mut self, text: &str) -> Option<usize> {
+        self.buf.push_str(text);
+        while let Some(i) = self.buf.find(['.', '!', '?', '\n', '—']) {
+            let end = i + self.buf[i..].chars().next().map_or(1, char::len_utf8);
+            let start = self.consumed;
+            let piece: String = self.buf.drain(..end).collect();
+            self.consumed += end;
+            let key = piece
+                .chars()
+                .filter(|c| c.is_alphanumeric() || c.is_whitespace())
+                .collect::<String>()
+                .to_lowercase()
+                .split_whitespace()
+                .collect::<Vec<_>>()
+                .join(" ");
+            if key.chars().count() < Self::MIN_CHARS {
+                continue;
+            }
+            let entry = self.seen.entry(key).or_insert((0, start));
+            entry.0 += 1;
+            if entry.0 >= Self::REPEATS {
+                return Some(entry.1);
+            }
+        }
+        None
+    }
+}
+
 /// Byte index just past the first sentence boundary: `.`/`!`/`?`/`:` followed by whitespace,
 /// or a newline. Very short fragments ("e.g.", "Dr.") are not treated as sentences.
 fn sentence_end(s: &str) -> Option<usize> {
@@ -210,4 +256,25 @@ pub fn speakable(text: &str) -> String {
         s = rest.to_string();
     }
     s.trim().to_string()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::LoopGuard;
+
+    #[test]
+    fn loop_guard_stops_a_reply_going_round_in_circles() {
+        let reply = "Good night is \"শুভ রাত\". Actually, it's \"রাতের শুভ দিন\" — no. Final answer: \"নিশ শুভ\" — no. \
+                     Actually, it's \"রাতের শুভ দিন\" — no. Final answer: \"নিশ শুভ\" — no. Actually, it's \"রাতের শুভ দিন\" — no.";
+        let mut guard = LoopGuard::default();
+        let start = reply.split_inclusive(' ').find_map(|piece| guard.push(piece)).expect("loop detected");
+        assert_eq!(reply[..start].trim(), "Good night is \"শুভ রাত\".");
+    }
+
+    #[test]
+    fn loop_guard_ignores_normal_replies() {
+        let reply = "Sure. First, open Settings. Then tap General. Then tap About. No. No. No. That's it.";
+        let mut guard = LoopGuard::default();
+        assert!(reply.split_inclusive(' ').all(|piece| guard.push(piece).is_none()));
+    }
 }

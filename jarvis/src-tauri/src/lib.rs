@@ -8,6 +8,7 @@ mod brain;
 mod cleanup;
 mod commands;
 mod config;
+mod front_window;
 mod gesture;
 mod history;
 mod hotkey;
@@ -16,6 +17,7 @@ mod model;
 mod permission;
 mod speech;
 mod transcribe;
+mod widget_drag;
 
 use audio::Recorder;
 use config::Config;
@@ -241,7 +243,9 @@ impl Core {
             mlog!("widget: window not found");
             return;
         };
-        place_widget(&self.app, &w);
+        if !widget_drag::dragging(&self.app) {
+            place_widget(&self.app, &w);
+        }
         show_without_focus(&w);
     }
 
@@ -583,6 +587,8 @@ impl Core {
         let messages = self.messages_for(&cfg, question);
         let mut reply = String::new();
         let mut splitter = SentenceSplitter::default();
+        let mut guard = llm::LoopGuard::default();
+        let mut loop_start = None;
         let mut first_token_ms = None;
         let t1 = Instant::now();
         let result = self.brain.chat(&messages, |piece| {
@@ -591,6 +597,11 @@ impl Core {
             }
             first_token_ms.get_or_insert(t1.elapsed().as_millis());
             reply.push_str(piece);
+            // Checked before speaking, so the repeat that gives the loop away is never said.
+            if let Some(start) = guard.push(piece) {
+                loop_start = Some(start);
+                return false;
+            }
             if cfg.speak_replies {
                 for sentence in splitter.push(piece) {
                     self.speaker.say(&llm::speakable(&sentence));
@@ -599,7 +610,19 @@ impl Core {
             self.emit_reply(turn, "speaking", question, reply.trim());
             true
         });
-        if cfg.speak_replies && self.current(turn) {
+        if let Some(start) = loop_start {
+            // Keep only what came before the loop, so it is neither shown, remembered (it would
+            // pull the next answers into the same rut) nor saved; then own up instead.
+            mlog!("reply went round in circles after {} chars; cut back to {start}", reply.len());
+            reply.truncate(start);
+            let sorry = "Sorry, I'm not sure about that one.";
+            if cfg.speak_replies && self.current(turn) {
+                self.speaker.stop();
+                self.speaker.say(sorry);
+            }
+            reply = format!("{} {sorry}", reply.trim());
+            self.emit_reply(turn, "speaking", question, reply.trim());
+        } else if cfg.speak_replies && self.current(turn) {
             if let Some(rest) = splitter.finish() {
                 self.speaker.say(&llm::speakable(&rest));
             }
@@ -897,7 +920,9 @@ fn system_prompt(cfg: &Config) -> String {
              what they most likely meant. You have no internet access: if a question needs live \
              information such as news, weather or prices, say so briefly instead of guessing. \
              You can only talk for now: you cannot open apps, control the computer, set reminders \
-             or send messages, so never offer to.",
+             or send messages, so never offer to. If you don't know something, or are unsure of a \
+             word in a language you don't know well, say so in one short sentence; never guess, \
+             and never correct yourself over and over.",
             name = cfg.assistant_name
         )
     });
@@ -915,13 +940,21 @@ fn key_label(key: &str) -> &str {
     }
 }
 
-/// Bottom-centre of the screen under the mouse.
+/// Bottom-centre of the screen with the window you're working in, or the screen under the
+/// mouse when no window is in front (e.g. the desktop). A spot the user dragged it to wins.
 fn place_widget(app: &AppHandle, win: &WebviewWindow) {
+    if let Some(p) = widget_drag::pinned(app) {
+        let _ = win.set_position(p);
+        return;
+    }
     let Ok(size) = win.outer_size() else { return };
-    let monitor = app
-        .cursor_position()
-        .ok()
-        .and_then(|p| app.monitor_from_point(p.x, p.y).ok().flatten())
+    let monitor = front_window::active_window_frame()
+        .and_then(|(x, y, w, h)| monitor_at_point(app, x + w / 2.0, y + h / 2.0))
+        .or_else(|| {
+            app.cursor_position()
+                .ok()
+                .and_then(|p| app.monitor_from_point(p.x, p.y).ok().flatten())
+        })
         .or_else(|| app.primary_monitor().ok().flatten());
     let Some(m) = monitor else {
         mlog!("widget: no monitor found to place it on");
@@ -932,6 +965,16 @@ fn place_widget(app: &AppHandle, win: &WebviewWindow) {
     let x = area.position.x + (area.size.width as i32 - size.width as i32) / 2;
     let y = area.position.y + area.size.height as i32 - size.height as i32 - margin;
     let _ = win.set_position(PhysicalPosition::new(x, y));
+}
+
+/// The display containing a point in screen points (top-left origin). Monitor frames are in
+/// pixels of their own scale, so each is converted back to points before comparing.
+fn monitor_at_point(app: &AppHandle, x: f64, y: f64) -> Option<tauri::Monitor> {
+    app.available_monitors().ok()?.into_iter().find(|m| {
+        let (s, p, size) = (m.scale_factor(), m.position(), m.size());
+        let (mx, my) = (p.x as f64 / s, p.y as f64 / s);
+        x >= mx && x < mx + size.width as f64 / s && y >= my && y < my + size.height as f64 / s
+    })
 }
 
 mod panel {
@@ -966,6 +1009,7 @@ mod panel {
         if let Err(e) = panel.add_style_mask(StyleMask::empty().nonactivating_panel().value()) {
             mlog!("widget: could not make panel non-activating: {e}");
         }
+        // Click-through until the mouse is over what the widget shows (see widget_drag).
         panel.set_ignores_mouse_events(true);
         Ok(())
     }
@@ -1103,6 +1147,8 @@ pub fn run() {
         .plugin(tauri_nspanel::init())
         .invoke_handler(tauri::generate_handler![
             widget_log,
+            widget_drag::widget_hit_rects,
+            widget_drag::widget_drag,
             commands::get_state,
             commands::save_config,
             commands::preview_voice,
@@ -1132,13 +1178,14 @@ pub fn run() {
             let history_item = MenuItem::with_id(app, "history", "History…", true, None::<&str>)?;
             let new_chat = MenuItem::with_id(app, "new", "New Conversation", true, Some("CmdOrCtrl+N"))?;
             let log = MenuItem::with_id(app, "log", "Open Log", true, None::<&str>)?;
+            let reset_widget = MenuItem::with_id(app, "reset_widget", "Reset Widget Position", true, None::<&str>)?;
             let login_enabled = app.autolaunch().is_enabled().unwrap_or(false);
             let login_item = CheckMenuItem::with_id(app, "login", "Start at Login", true, login_enabled, None::<&str>)?;
             let quit = MenuItem::with_id(app, "quit", "Quit Jarvis", true, Some("CmdOrCtrl+Q"))?;
             let sep = || PredefinedMenuItem::separator(app);
             let menu = Menu::with_items(
                 app,
-                &[&status, &sep()?, &open_item, &history_item, &new_chat, &sep()?, &log, &login_item, &quit],
+                &[&status, &sep()?, &open_item, &history_item, &new_chat, &sep()?, &reset_widget, &log, &login_item, &quit],
             )?;
 
             TrayIconBuilder::with_id("jarvis")
@@ -1153,6 +1200,7 @@ pub fn run() {
                     "open" => open_main_window(app, Some("home")),
                     "history" => open_main_window(app, Some("history")),
                     "log" => open_text_file(&config::log_path()),
+                    "reset_widget" => widget_drag::reset(app),
                     "login" => {
                         let autolaunch = app.autolaunch();
                         let enable = !autolaunch.is_enabled().unwrap_or(false);
@@ -1166,11 +1214,20 @@ pub fn run() {
                 })
                 .build(app)?;
 
+            app.manage(widget_drag::WidgetDrag::load());
             if let Some(w) = app.get_webview_window("widget") {
                 let _ = w.set_ignore_cursor_events(true);
                 if let Err(e) = panel::convert(&w) {
                     mlog!("widget: panel conversion failed: {e}");
                 }
+                let handle = app.handle().clone();
+                w.on_window_event(move |event| {
+                    if let tauri::WindowEvent::Moved(pos) = event {
+                        widget_drag::on_moved(&handle, *pos);
+                    }
+                });
+                let handle = app.handle().clone();
+                std::thread::spawn(move || widget_drag::track(handle));
             }
 
             let core = Arc::new(Core {

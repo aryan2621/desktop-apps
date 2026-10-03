@@ -1739,6 +1739,7 @@ dependencies = [
  "cpal",
  "dirs 6.0.0",
  "objc2",
+ "objc2-app-kit",
  "objc2-foundation",
  "regex",
  "reqwest 0.12.28",

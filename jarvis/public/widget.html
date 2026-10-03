@@ -39,7 +39,7 @@
       opacity: 0; transform: translateY(6px);
       transition: opacity .18s ease, transform .18s ease;
     }
-    .card.visible { opacity: 1; transform: none; }
+    .card.visible { opacity: 1; transform: none; cursor: grab; }
     .question {
       color: var(--muted); font-size: 12px; line-height: 1.35;
       white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
@@ -74,7 +74,7 @@
       opacity: 0; transform: translateY(6px) scale(0.96);
       transition: opacity .16s ease, transform .16s ease, min-width .2s ease;
     }
-    .pill.visible { opacity: 1; transform: none; }
+    .pill.visible { opacity: 1; transform: none; cursor: grab; }
     .pill.compact { min-width: 44px; padding: 0 14px; justify-content: center; }
 
     .dot {
@@ -182,11 +182,13 @@
       if (parts.icon) icon.innerHTML = ICONS[parts.icon];
       if (parts.progress != null) barFill.style.width = `${Math.round(parts.progress * 100)}%`;
       pill.className = "pill visible" + (parts.cls ? " " + parts.cls : "");
+      reportHitRects();
     }
 
     function showCard(q, text, thinking) {
       if (q == null) {
         card.className = "card hidden";
+        reportHitRects();
         return;
       }
       question.textContent = q ? `“${q}”` : "";
@@ -194,6 +196,7 @@
       reply.className = "reply" + (thinking ? " thinking" : "");
       card.className = "card visible";
       reply.scrollTop = reply.scrollHeight;
+      reportHitRects();
     }
 
     function setState({ state, message, progress, question: q, reply: text }) {
@@ -241,6 +244,27 @@
 
     const log = (m) => window.__TAURI__?.core?.invoke("widget_log", { message: String(m) }).catch(() => {});
     window.addEventListener("error", (e) => log(`error: ${e.message}`));
+
+    // --- Dragging ------------------------------------------------------------------------
+    // The window lets clicks through except over these parts, so it reports where they are;
+    // pressing on one drags the widget (it then stays there until reset from the menu bar).
+    const draggable = [card, pill];
+    function reportHitRects() {
+      const rects = draggable
+        .filter((el) => el.classList.contains("visible"))
+        .map((el) => el.getBoundingClientRect())
+        .filter((r) => r.width > 0 && r.height > 0)
+        .map((r) => [r.x, r.y, r.width, r.height]);
+      window.__TAURI__.core.invoke("widget_hit_rects", { rects }).catch(() => {});
+    }
+    const resized = new ResizeObserver(reportHitRects);
+    draggable.forEach((el) => resized.observe(el));
+    document.addEventListener("mousedown", (e) => {
+      if (e.button !== 0 || !draggable.some((el) => el.contains(e.target))) return;
+      e.preventDefault();
+      window.__TAURI__.core.invoke("widget_drag").catch((err) => log(`drag failed: ${err}`));
+    });
+
     const { listen } = window.__TAURI__.event;
     listen("widget-state", (e) => {
       try { setState(e.payload); } catch (err) { log(`setState failed: ${err}`); }
