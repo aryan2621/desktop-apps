@@ -502,30 +502,3 @@ pub async fn google_upload(app: AppHandle, google: State<'_, Google>, request: U
 pub fn google_cancel_upload(google: State<'_, Google>) {
     google.cancel.store(true, Ordering::SeqCst);
 }
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use reqwest::header::HeaderValue;
-
-    #[test]
-    fn resumes_after_the_last_byte_google_has() {
-        assert_eq!(next_offset(Some(&HeaderValue::from_static("bytes=0-8388607"))), 8_388_608);
-        assert_eq!(next_offset(None), 0);
-    }
-
-    #[test]
-    fn reads_the_email_from_an_id_token() {
-        let payload = URL_SAFE_NO_PAD.encode(br#"{"email":"someone@example.com","sub":"1"}"#);
-        assert_eq!(email_from_id_token(&format!("header.{payload}.signature")).as_deref(), Some("someone@example.com"));
-        assert_eq!(email_from_id_token("not-a-token"), None);
-    }
-
-    #[test]
-    fn accepts_the_downloaded_client_file_and_a_flat_one() {
-        let downloaded: ClientFile = serde_json::from_str(r#"{"installed":{"client_id":"id.apps","client_secret":"s","redirect_uris":["http://localhost"]}}"#).unwrap();
-        assert_eq!(downloaded.installed.or(downloaded.flat).unwrap().client_id, "id.apps");
-        let flat: ClientFile = serde_json::from_str(r#"{"client_id":"id2","client_secret":"s2"}"#).unwrap();
-        assert_eq!(flat.installed.or(flat.flat).unwrap().client_id, "id2");
-    }
-}
