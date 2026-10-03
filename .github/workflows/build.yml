@@ -42,9 +42,8 @@ jobs:
       - run: npm ci
 
       # The Tauri build first compiles the Swift ScreenCaptureKit helper (npm run build:recorder).
-      # CI has no "Capturita Dev" certificate, so the app is ad-hoc signed ("-").
       - name: Build app
-        run: npx tauri build --bundles app,dmg --config '{"bundle":{"macOS":{"signingIdentity":"-"}}}'
+        run: npx tauri build --bundles app,dmg
 
       - uses: actions/upload-artifact@v4
         with:
@@ -101,10 +100,9 @@ jobs:
 
       - run: pnpm typecheck
 
-      # CI has no "Capturita Dev" certificate, so the macOS app is ad-hoc signed ("-").
       - name: Build app
         shell: bash
-        run: pnpm tauri build --bundles ${{ matrix.bundles }} --config '{"bundle":{"macOS":{"signingIdentity":"-"}}}'
+        run: pnpm tauri build --bundles ${{ matrix.bundles }}
 
       - uses: actions/upload-artifact@v4
         with:
@@ -148,9 +146,8 @@ jobs:
 
       - run: pnpm typecheck
 
-      # CI has no "Capturita Dev" certificate, so the app is ad-hoc signed ("-").
       - name: Build app
-        run: pnpm tauri build --bundles app,dmg --config '{"bundle":{"macOS":{"signingIdentity":"-"}}}'
+        run: pnpm tauri build --bundles app,dmg
 
       - uses: actions/upload-artifact@v4
         with:

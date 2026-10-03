@@ -38,7 +38,7 @@
     ],
     "macOS": {
       "minimumSystemVersion": "15.0",
-      "signingIdentity": "Capturita Dev",
+      "signingIdentity": "-",
       "entitlements": "Entitlements.plist"
     },
     "icon": [
