@@ -15,7 +15,10 @@ if [[ -x "$OUT" && "$(cat "$OUT.version" 2>/dev/null)" == "$VERSION" ]]; then
   exit 0
 fi
 
-if [[ ! -d "$CACHE" ]]; then
+# Check for the sources themselves, not just the folder: CI's Rust cache restores target/ with
+# files it doesn't know about pruned, leaving an empty llama.cpp folder behind.
+if [[ ! -f "$CACHE/CMakeLists.txt" ]]; then
+  rm -rf "$CACHE"
   mkdir -p "$CACHE"
   curl -fsSL "https://github.com/ggml-org/llama.cpp/archive/refs/tags/$VERSION.tar.gz" | tar xz -C "$CACHE" --strip-components 1
 fi
