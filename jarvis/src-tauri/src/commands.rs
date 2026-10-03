@@ -43,6 +43,16 @@ pub struct OllamaState {
     error: Option<String>,
 }
 
+/// The two models Jarvis needs, and their downloads in progress (0–1).
+#[derive(Serialize)]
+pub struct Models {
+    speech_ready: bool,
+    brain_ready: bool,
+    brain_label: &'static str,
+    brain_size_mb: u32,
+    downloads: std::collections::HashMap<&'static str, f32>,
+}
+
 #[derive(Serialize)]
 pub struct AppState {
     config: Config,
@@ -50,6 +60,7 @@ pub struct AppState {
     model_loaded: bool,
     permissions: Permissions,
     ollama: OllamaState,
+    setup: Models,
     voices: Vec<speech::Voice>,
     models: Vec<ModelInfo>,
     devices: Vec<String>,
@@ -79,7 +90,8 @@ fn hotkeys() -> Vec<Choice> {
 pub fn get_state(app: AppHandle, core: State<'_, Arc<Core>>) -> AppState {
     use tauri_plugin_autostart::ManagerExt;
     let dir = config::data_dir();
-    let ollama = match core.ollama.models() {
+    let cfg = core.cfg();
+    let ollama = match core.brain.ollama.models() {
         Ok(models) => OllamaState { running: true, models, error: None },
         Err(e) => OllamaState { running: false, models: vec![], error: Some(e.to_string()) },
     };
@@ -88,6 +100,13 @@ pub fn get_state(app: AppHandle, core: State<'_, Arc<Core>>) -> AppState {
         model_loaded: core.transcriber.lock().unwrap().is_some(),
         permissions: Permissions { accessibility: permission::has_accessibility(false), microphone: microphone_status() },
         ollama,
+        setup: Models {
+            speech_ready: model::model_path(&dir, &cfg.whisper_model).exists(),
+            brain_ready: model::brain_path(&dir).exists(),
+            brain_label: model::BRAIN_LABEL,
+            brain_size_mb: model::BRAIN_SIZE_MB,
+            downloads: core.downloads.lock().unwrap().clone(),
+        },
         voices: speech::voices(),
         models: WHISPER_MODELS
             .iter()
@@ -98,7 +117,7 @@ pub fn get_state(app: AppHandle, core: State<'_, Arc<Core>>) -> AppState {
         login_enabled: app.autolaunch().is_enabled().unwrap_or(false),
         version: env!("CARGO_PKG_VERSION"),
         data_dir: dir.display().to_string(),
-        config: core.cfg(),
+        config: cfg,
     }
 }
 
@@ -109,11 +128,11 @@ pub fn save_config(app: AppHandle, core: State<'_, Arc<Core>>, config: Config) -
     let old = core.cfg();
     config::save(&config).map_err(|e| e.to_string())?;
     *core.cfg.write().unwrap() = config.clone();
-    core.ollama.configure(&config.ollama_url, &config.llm_model, &config.keep_alive);
+    core.brain.configure(&config);
     if old.voice != config.voice || old.speech_rate != config.speech_rate {
         core.speaker.configure(&config.voice, config.speech_rate);
     }
-    if old.llm_model != config.llm_model {
+    if old.llm_model != config.llm_model || old.brain != config.brain {
         *core.last_warm_up.lock().unwrap() = None;
         core.inner().warm_up_llm();
     }
@@ -150,6 +169,29 @@ pub fn stop_speaking(core: State<'_, Arc<Core>>) {
 #[tauri::command]
 pub fn ask_text(core: State<'_, Arc<Core>>, question: String) -> Result<(), String> {
     core.inner().ask_typed(question.trim()).map_err(|e| e.to_string())
+}
+
+/// Setup: download whichever models are missing (progress arrives as `download-progress`).
+#[tauri::command]
+pub fn download_models(core: State<'_, Arc<Core>>) {
+    core.inner().download_models();
+}
+
+/// Setup: make macOS ask for microphone access.
+#[tauri::command]
+pub fn request_microphone() {
+    request_microphone_access();
+}
+
+/// Setup is complete (or skipped): don't show it on launch again.
+#[tauri::command]
+pub fn finish_setup(core: State<'_, Arc<Core>>) -> Result<(), String> {
+    let mut cfg = core.cfg();
+    cfg.setup_done = true;
+    config::save(&cfg).map_err(|e| e.to_string())?;
+    *core.cfg.write().unwrap() = cfg;
+    core.ready_status();
+    Ok(())
 }
 
 #[tauri::command]
@@ -236,5 +278,26 @@ fn microphone_status() -> &'static str {
         1 | 2 => "denied",
         3 => "granted",
         _ => "unknown",
+    }
+}
+
+/// Asks macOS for microphone access through AVFoundation, the same API the status is read from,
+/// so the app sees the answer straight away (opening the mic via Core Audio also triggers the
+/// prompt, but the status only updates after a restart). Shows the system prompt the first time.
+fn request_microphone_access() {
+    use block2::RcBlock;
+    use objc2::msg_send;
+    use objc2::runtime::{AnyClass, Bool};
+    use objc2_foundation::NSString;
+
+    #[link(name = "AVFoundation", kind = "framework")]
+    extern "C" {}
+
+    let Some(class) = AnyClass::get(c"AVCaptureDevice") else { return };
+    // AVMediaTypeAudio
+    let media = NSString::from_str("soun");
+    let handler = RcBlock::new(|granted: Bool| mlog!("microphone access {}", if granted.as_bool() { "granted" } else { "denied" }));
+    unsafe {
+        let _: () = msg_send![class, requestAccessForMediaType: &*media, completionHandler: &*handler];
     }
 }

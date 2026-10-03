@@ -7,6 +7,8 @@ export interface Config {
   whisper_model: string;
   language: string;
   input_device: string | null;
+  /** "builtin" (the AI bundled with Jarvis) or "ollama". */
+  brain: "builtin" | "ollama";
   ollama_url: string;
   llm_model: string;
   keep_alive: string;
@@ -22,6 +24,7 @@ export interface Config {
   conversation_timeout_seconds: number;
   speech_threshold: number;
   save_history: boolean;
+  setup_done: boolean;
 }
 
 export interface ModelInfo {
@@ -43,6 +46,8 @@ export interface AppState {
   model_loaded: boolean;
   permissions: { accessibility: boolean; microphone: "granted" | "denied" | "not_asked" | "unknown" };
   ollama: { running: boolean; models: string[]; error: string | null };
+  /** The speech and AI models, and downloads in progress (0–1) keyed "speech" / "brain". */
+  setup: { speech_ready: boolean; brain_ready: boolean; brain_label: string; brain_size_mb: number; downloads: Partial<Record<"speech" | "brain", number>> };
   voices: Voice[];
   models: ModelInfo[];
   devices: string[];
@@ -79,6 +84,9 @@ export const api = {
   stop: () => invoke<void>("stop_speaking"),
   ask: (question: string) => invoke<void>("ask_text", { question }),
   newConversation: () => invoke<void>("new_conversation"),
+  downloadModels: () => invoke<void>("download_models"),
+  requestMicrophone: () => invoke<void>("request_microphone"),
+  finishSetup: () => invoke<void>("finish_setup"),
   history: (query = "", limit?: number) => invoke<Entry[]>("history_list", { query, limit }),
   deleteEntry: (time: string) => invoke<void>("history_delete", { time }),
   clearHistory: () => invoke<void>("history_clear"),
@@ -95,6 +103,9 @@ export const events = {
   navigate: (cb: (tab: string) => void) => listen<string>("navigate", (e) => cb(e.payload)),
   reply: (cb: (r: Reply) => void) => listen<Reply>("reply", (e) => cb(e.payload)),
   replyError: (cb: (message: string) => void) => listen<string>("reply-error", (e) => cb(e.payload)),
+  downloadProgress: (cb: (p: { model: "speech" | "brain"; progress: number | null }) => void) =>
+    listen<{ model: "speech" | "brain"; progress: number | null }>("download-progress", (e) => cb(e.payload)),
+  downloadError: (cb: (message: string) => void) => listen<string>("download-error", (e) => cb(e.payload)),
 };
 
 /** Time from finishing speaking to hearing the first words of the answer. */

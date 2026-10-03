@@ -30,7 +30,8 @@ export default function Home({ app, goTo }: { app: ReturnType<typeof useAppState
   const perms = s?.permissions;
   const key = s?.hotkeys.find((h) => h.id === s.config.hotkey)?.label.split(" ").at(-1) ?? "⌥";
   const name = s?.config.assistant_name || "Jarvis";
-  const modelMissing = s?.ollama.running && !s.ollama.models.includes(s.config.llm_model);
+  const usesOllama = s?.config.brain === "ollama";
+  const modelMissing = usesOllama && s?.ollama.running && !s.ollama.models.includes(s.config.llm_model);
 
   const week = useMemo(() => questionsPerDay(entries ?? [], 7), [entries]);
   const days = useMemo(() => streak(entries ?? []), [entries]);
@@ -95,7 +96,14 @@ export default function Home({ app, goTo }: { app: ReturnType<typeof useAppState
           </AlertAction>
         </Alert>
       )}
-      {s && !s.ollama.running && (
+      {s && !usesOllama && !(s.setup.speech_ready && s.setup.brain_ready) && (
+        <Alert className="mb-4 rounded-xl">
+          <ShieldAlert />
+          <AlertTitle>Finish setting up {name}</AlertTitle>
+          <AlertDescription>{s.setup.brain_ready ? "The speech model" : "The AI model"} isn't downloaded yet.</AlertDescription>
+        </Alert>
+      )}
+      {s && usesOllama && !s.ollama.running && (
         <Alert className="mb-4 rounded-xl">
           <ShieldAlert />
           <AlertTitle>Ollama isn't running</AlertTitle>
@@ -163,7 +171,7 @@ export default function Home({ app, goTo }: { app: ReturnType<typeof useAppState
             <div className="mt-1.5 text-sm opacity-80">from your last word to its first</div>
           </div>
           <div className="border-t border-white/15 pt-3 text-xs">
-            <span className="font-display text-2xl leading-none">{s?.config.llm_model ?? "–"}</span>
+            <span className="font-display text-2xl leading-none">{s ? (usesOllama ? s.config.llm_model : s.setup.brain_label) : "–"}</span>
             <span className="ml-2 opacity-70">on this Mac</span>
           </div>
         </div>

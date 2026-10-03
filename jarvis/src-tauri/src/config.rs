@@ -15,11 +15,13 @@ pub struct Config {
     pub language: String,
     /// Microphone name; `None` follows the system default input.
     pub input_device: Option<String>,
+    /// "builtin" (the AI bundled with Jarvis) or "ollama" (an Ollama the user runs themselves).
+    pub brain: String,
     /// Where Ollama is listening.
     pub ollama_url: String,
     /// Any model from `ollama list`, e.g. "qwen3:8b", "qwen2.5:7b".
     pub llm_model: String,
-    /// How long Ollama keeps the model in memory after a question ("30m", "1h", "-1" = forever).
+    /// How long the AI model stays in memory after a question ("30m", "1h", "-1" = forever).
     pub keep_alive: String,
     /// Replaces the built-in personality / instructions when set.
     pub system_prompt: Option<String>,
@@ -46,6 +48,8 @@ pub struct Config {
     pub speech_threshold: f32,
     /// Keep a local log of questions and answers (History page).
     pub save_history: bool,
+    /// The first-run setup has been completed (or skipped).
+    pub setup_done: bool,
 }
 
 impl Default for Config {
@@ -55,6 +59,7 @@ impl Default for Config {
             whisper_model: "large-v3-turbo-q5_0".into(),
             language: "en".into(),
             input_device: None,
+            brain: "builtin".into(),
             ollama_url: "http://localhost:11434".into(),
             llm_model: "qwen3:8b".into(),
             keep_alive: "30m".into(),
@@ -70,7 +75,21 @@ impl Default for Config {
             conversation_timeout_seconds: 20,
             speech_threshold: 0.012,
             save_history: true,
+            setup_done: false,
         }
+    }
+}
+
+impl Config {
+    /// `keep_alive` in minutes; 0 means keep the model loaded.
+    pub fn keep_alive_minutes(&self) -> u64 {
+        let v = self.keep_alive.trim();
+        if v.starts_with('-') {
+            return 0;
+        }
+        let (number, unit) = v.split_at(v.find(|c: char| !c.is_ascii_digit()).unwrap_or(v.len()));
+        let n: u64 = number.parse().unwrap_or(30);
+        if unit.starts_with('h') { n * 60 } else { n }
     }
 }
 

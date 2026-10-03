@@ -4,6 +4,7 @@ macro_rules! mlog {
 }
 
 mod audio;
+mod brain;
 mod cleanup;
 mod commands;
 mod config;
@@ -19,7 +20,8 @@ mod transcribe;
 use audio::Recorder;
 use config::Config;
 use hotkey::HotkeyEvent;
-use llm::{Message, Ollama, SentenceSplitter};
+use brain::Brain;
+use llm::{Message, SentenceSplitter};
 use serde::Serialize;
 use speech::Speaker;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
@@ -35,7 +37,7 @@ use transcribe::Transcriber;
 const MIN_SECONDS: f32 = 0.3;
 /// Below this peak RMS the clip is considered silence (prevents Whisper hallucinations).
 const SILENCE_RMS: f32 = 0.006;
-/// Don't ask Ollama to load the model more often than this.
+/// Don't ask the AI to load its model more often than this.
 const WARM_UP_EVERY: Duration = Duration::from_secs(60);
 
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -138,7 +140,9 @@ struct Core {
     cfg: RwLock<Config>,
     recorder: Recorder,
     transcriber: Mutex<Option<Arc<Transcriber>>>,
-    ollama: Ollama,
+    brain: Brain,
+    /// Download progress (0–1) of the speech ("speech") and AI ("brain") models, while downloading.
+    downloads: Mutex<std::collections::HashMap<&'static str, f32>>,
     speaker: Speaker,
     conversation: Mutex<Conversation>,
     phase: Mutex<Phase>,
@@ -581,7 +585,7 @@ impl Core {
         let mut splitter = SentenceSplitter::default();
         let mut first_token_ms = None;
         let t1 = Instant::now();
-        let result = self.ollama.chat(&messages, |piece| {
+        let result = self.brain.chat(&messages, |piece| {
             if !self.current(turn) {
                 return false;
             }
@@ -614,7 +618,7 @@ impl Core {
                     heard_ms,
                     first_word_ms: first_token_ms.unwrap_or_default() as u64,
                     total_ms,
-                    model: self.ollama.model(),
+                    model: self.brain.model_name(),
                 });
                 let _ = self.app.emit_to("main", "history-updated", ());
             }
@@ -716,7 +720,7 @@ impl Core {
         mlog!("new conversation");
     }
 
-    /// Asks Ollama to load the model in the background, so it's ready by the time the
+    /// Asks the AI to load its model in the background, so it's ready by the time the
     /// question is transcribed. Cheap when it's already loaded.
     fn warm_up_llm(self: &Arc<Self>) {
         {
@@ -729,10 +733,10 @@ impl Core {
         let core = self.clone();
         std::thread::spawn(move || {
             let started = Instant::now();
-            match core.ollama.warm_up() {
-                Ok(()) => mlog!("ollama ready ({} ms)", started.elapsed().as_millis()),
+            match core.brain.warm_up() {
+                Ok(()) => mlog!("AI ready ({} ms)", started.elapsed().as_millis()),
                 Err(e) => {
-                    mlog!("ollama: {e}");
+                    mlog!("AI: {e}");
                     core.set_status(&e.to_string());
                     // Try again on the next press.
                     *core.last_warm_up.lock().unwrap() = None;
@@ -754,21 +758,30 @@ impl Core {
         let dir = config::data_dir();
         let name = self.cfg().whisper_model;
         let needs_download = !model::model_path(&dir, &name).exists();
-        if needs_download {
+        // During setup the app window shows the progress; afterwards the floating widget does.
+        let widget = needs_download && self.cfg().setup_done;
+        if widget {
             self.emit("downloading", Some("Downloading speech model…".into()), Some(0.0));
             self.show_widget();
         }
         let path = model::ensure(&dir, &name, |done, total| {
             let pct = if total > 0 { done as f32 / total as f32 } else { 0.0 };
             self.set_status(&format!("Downloading speech model… {:.0}%", pct * 100.0));
-            self.emit("downloading", Some(format!("Downloading model {:.0}%", pct * 100.0)), Some(pct));
+            self.download_progress("speech", Some(pct));
+            if widget {
+                self.emit("downloading", Some(format!("Downloading model {:.0}%", pct * 100.0)), Some(pct));
+            }
         });
+        self.download_progress("speech", None);
         let path = match path {
             Ok(p) => p,
             Err(e) => {
                 self.set_phase(Phase::Idle);
-                self.set_status("Speech model download failed — choose Reload Settings to retry");
-                self.fail(&format!("Download failed: {e}"));
+                self.set_status("Speech model download failed — retry from setup");
+                let _ = self.app.emit_to("main", "download-error", format!("Speech model: {e}"));
+                if self.cfg().setup_done {
+                    self.fail(&format!("Download failed: {e}"));
+                }
                 return;
             }
         };
@@ -792,6 +805,48 @@ impl Core {
                 self.set_status("Speech model failed to load");
                 self.fail(&format!("Model load failed: {e}"));
             }
+        }
+    }
+
+    /// Records and announces a model download's progress (`None` = finished or stopped).
+    fn download_progress(&self, which: &'static str, progress: Option<f32>) {
+        let mut downloads = self.downloads.lock().unwrap();
+        match progress {
+            Some(p) => downloads.insert(which, p),
+            None => downloads.remove(which),
+        };
+        let _ = self.app.emit_to("main", "download-progress", serde_json::json!({ "model": which, "progress": progress }));
+    }
+
+    /// Downloads whichever models are missing (setup's download step). Safe to call repeatedly.
+    fn download_models(self: &Arc<Self>) {
+        let dir = config::data_dir();
+        let downloading = |which| self.downloads.lock().unwrap().contains_key(which);
+        if !model::model_path(&dir, &self.cfg().whisper_model).exists() && !downloading("speech") {
+            self.download_progress("speech", Some(0.0));
+            let core = self.clone();
+            std::thread::spawn(move || core.load_model());
+        }
+        if !model::brain_path(&dir).exists() && !downloading("brain") {
+            self.download_progress("brain", Some(0.0));
+            let core = self.clone();
+            std::thread::spawn(move || {
+                let result = model::ensure_brain(&config::data_dir(), |done, total| {
+                    core.download_progress("brain", Some(if total > 0 { done as f32 / total as f32 } else { 0.0 }));
+                });
+                core.download_progress("brain", None);
+                match result {
+                    Ok(_) => {
+                        mlog!("AI model downloaded");
+                        *core.last_warm_up.lock().unwrap() = None;
+                        core.warm_up_llm();
+                    }
+                    Err(e) => {
+                        mlog!("AI model download failed: {e}");
+                        let _ = core.app.emit_to("main", "download-error", format!("AI model: {e}"));
+                    }
+                }
+            });
         }
     }
 
@@ -1060,6 +1115,9 @@ pub fn run() {
             commands::stop_speaking,
             commands::ask_text,
             commands::new_conversation,
+            commands::download_models,
+            commands::request_microphone,
+            commands::finish_setup,
             commands::history_list,
             commands::history_delete,
             commands::history_clear,
@@ -1123,7 +1181,8 @@ pub fn run() {
 
             let core = Arc::new(Core {
                 app: app.handle().clone(),
-                ollama: Ollama::new(&cfg.ollama_url, &cfg.llm_model, &cfg.keep_alive),
+                brain: Brain::new(&cfg),
+                downloads: Mutex::new(std::collections::HashMap::new()),
                 speaker: Speaker::new(&cfg.voice, cfg.speech_rate),
                 cfg: RwLock::new(cfg),
                 recorder: Recorder::new(),
@@ -1163,6 +1222,14 @@ pub fn run() {
             });
             let c = core.clone();
             std::thread::spawn(move || c.start_hotkey());
+            // Free the built-in AI's memory after the idle time set in Settings.
+            let c = core.clone();
+            std::thread::spawn(move || loop {
+                std::thread::sleep(Duration::from_secs(30));
+                if !c.brain.uses_ollama() {
+                    c.brain.local.stop_if_idle(c.cfg().keep_alive_minutes());
+                }
+            });
             app.manage(core);
             // Onboarding: show the app window on first run or while a permission is missing.
             // Debug aid: `open --env JARVIS_TAB=settings Jarvis.app` opens straight onto a page.
@@ -1180,6 +1247,8 @@ pub fn run() {
         RunEvent::ExitRequested { api, code: None, .. } => api.prevent_exit(),
         // Launching Jarvis again (Spotlight, Finder, Dock) opens the app window.
         RunEvent::Reopen { .. } => open_main_window(app, None),
+        // Never leave the built-in AI running (and holding memory) after Jarvis quits.
+        RunEvent::Exit => app.state::<Arc<Core>>().brain.local.stop(),
         _ => {}
     });
 }
@@ -1188,13 +1257,13 @@ pub fn run() {
 pub fn cli_ask(question: &str) -> anyhow::Result<()> {
     use std::io::Write;
     let cfg = config::load();
-    let ollama = Ollama::new(&cfg.ollama_url, &cfg.llm_model, &cfg.keep_alive);
+    let brain = Brain::new(&cfg);
     let speaker = Speaker::new(&cfg.voice, cfg.speech_rate);
     let messages = vec![Message::system(system_prompt(&cfg)), Message::user(question)];
     let mut splitter = SentenceSplitter::default();
     let started = Instant::now();
     let mut first = None;
-    ollama.chat(&messages, |piece| {
+    brain.chat(&messages, |piece| {
         first.get_or_insert(started.elapsed().as_millis());
         print!("{piece}");
         let _ = std::io::stdout().flush();
@@ -1209,7 +1278,8 @@ pub fn cli_ask(question: &str) -> anyhow::Result<()> {
         speaker.say(&llm::speakable(&rest));
     }
     println!();
-    eprintln!("model: {}  first words: {} ms  full reply: {} ms", cfg.llm_model, first.unwrap_or_default(), started.elapsed().as_millis());
+    eprintln!("model: {}  first words: {} ms  full reply: {} ms", brain.model_name(), first.unwrap_or_default(), started.elapsed().as_millis());
     speaker.wait(|| true);
+    brain.local.stop();
     Ok(())
 }

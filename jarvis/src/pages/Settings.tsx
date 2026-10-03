@@ -81,7 +81,7 @@ function groupVoices(voices: Voice[]) {
 
 const formatSize = (mb: number) => (mb >= 1000 ? `${(mb / 1000).toFixed(1)} GB` : `${mb} MB`);
 
-export default function Settings({ app }: { app: ReturnType<typeof useAppState> }) {
+export default function Settings({ app, onRunSetup }: { app: ReturnType<typeof useAppState>; onRunSetup: () => void }) {
   const { state, setState, refresh } = app;
   const [name, setName] = useState("");
   const [prompt, setPrompt] = useState("");
@@ -132,8 +132,29 @@ export default function Settings({ app }: { app: ReturnType<typeof useAppState> 
 
       <Section icon={Brain} tint="bg-violet-500" title="Brain">
         <Row
+          id="brain"
+          title="AI"
+          description={
+            c.brain === "builtin"
+              ? `${state.setup.brain_label}, built into ${c.assistant_name}. ${state.setup.brain_ready ? "Downloaded and ready." : "Not downloaded yet — run setup to get it."}`
+              : "Use a model from your own Ollama instead (advanced)."
+          }
+        >
+          <Choice
+            id="brain"
+            className="w-44"
+            value={c.brain}
+            options={[
+              ["builtin", "Built-in"],
+              ["ollama", "Ollama"],
+            ]}
+            onChange={(v) => save({ brain: v })}
+          />
+        </Row>
+        {c.brain === "ollama" && (
+        <Row
           id="llm"
-          title="Model"
+          title="Ollama model"
           description={state.ollama.running ? "Models installed in Ollama on this Mac. Bigger models are smarter but slower." : "Ollama isn't running, so installed models can't be listed."}
         >
           <div className="flex items-center gap-1">
@@ -153,6 +174,7 @@ export default function Settings({ app }: { app: ReturnType<typeof useAppState> 
             </Button>
           </div>
         </Row>
+        )}
         <Row id="name" title="Name" description="What the assistant calls itself.">
           <Input id="name" className="w-56" value={name} onChange={(e) => setName(e.target.value)} onBlur={() => name.trim() && name !== c.assistant_name && save({ assistant_name: name.trim() })} />
         </Row>
@@ -169,7 +191,7 @@ export default function Settings({ app }: { app: ReturnType<typeof useAppState> 
         <Row id="forget" title="Memory" description="Follow-up questions remember the conversation until it goes quiet for this long.">
           <Choice id="forget" className="w-44" value={c.forget_after_minutes} options={FORGET} format={(v) => `${v} minutes`} onChange={(v) => save({ forget_after_minutes: v })} />
         </Row>
-        <Row id="keep" title="Keep model loaded" description="Loading takes ~5 s; while loaded it uses ~5 GB of memory.">
+        <Row id="keep" title="Keep model loaded" description="Loading takes a few seconds; while loaded it uses about 3 GB of memory.">
           <Choice id="keep" className="w-44" value={c.keep_alive} options={KEEP_ALIVE} onChange={(v) => save({ keep_alive: v })} />
         </Row>
       </Section>
@@ -287,9 +309,14 @@ export default function Settings({ app }: { app: ReturnType<typeof useAppState> 
 
       <Section icon={Info} tint="bg-stone-500" title="About">
         <Row title={`${c.assistant_name} ${state.version}`} description={<span data-selectable>{state.data_dir}</span>}>
-          <Button variant="outline" size="sm" onClick={() => api.openDataFolder().catch((e) => toast.error(`Couldn't open the folder: ${e}`))}>
-            <FolderOpen /> Show data folder
-          </Button>
+          <div className="flex gap-2">
+            <Button variant="outline" size="sm" onClick={onRunSetup}>
+              <Sparkles /> Run setup again
+            </Button>
+            <Button variant="outline" size="sm" onClick={() => api.openDataFolder().catch((e) => toast.error(`Couldn't open the folder: ${e}`))}>
+              <FolderOpen /> Show data folder
+            </Button>
+          </div>
         </Row>
       </Section>
     </>

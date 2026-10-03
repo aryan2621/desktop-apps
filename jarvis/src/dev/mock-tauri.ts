@@ -32,21 +32,38 @@ function makeHistory(): Entry[] {
 }
 
 let history = makeHistory();
+// Preview setup: `?setup=<step>` opens it at that step; `&fresh` shows nothing done yet; `&dl=0.4` a download in progress.
+const params = new URLSearchParams(location.search);
+const previewSetup = params.has("setup");
+const fresh = params.has("fresh");
+const dl = params.has("dl") ? Number(params.get("dl")) : null;
+if (previewSetup) {
+  try {
+    localStorage.setItem("jarvis.setupStep", params.get("setup") || "0");
+  } catch {
+    /* ignore */
+  }
+}
 let config: Config = {
   hotkey: "right_option", whisper_model: "large-v3-turbo-q5_0", language: "en", input_device: null,
-  ollama_url: "http://localhost:11434", llm_model: "qwen3:8b", keep_alive: "30m", system_prompt: null,
+  brain: "builtin", ollama_url: "http://localhost:11434", llm_model: "qwen3:8b", keep_alive: "30m", system_prompt: null,
   assistant_name: "Jarvis", voice: "Tara", speech_rate: 195, speak_replies: true, sounds: true,
   forget_after_minutes: 5, history_turns: 8, pause_seconds: 2, conversation_timeout_seconds: 20,
-  speech_threshold: 0.012, save_history: true,
+  speech_threshold: 0.012, save_history: true, setup_done: !previewSetup,
 };
 
 const state = (): AppState => ({
   config, status: "Ready — hold Right ⌥ to ask", model_loaded: true,
-  permissions: { accessibility: true, microphone: "granted" },
+  permissions: { accessibility: !fresh, microphone: fresh ? "not_asked" : "granted" },
   ollama: { running: true, models: ["ministral-3:8b", "qwen2.5:7b", "qwen3:8b"], error: null },
+  setup: {
+    speech_ready: !fresh || (dl !== null && dl >= 0.99), brain_ready: !fresh, brain_label: "Qwen3 4B", brain_size_mb: 2382,
+    downloads: dl !== null ? { speech: Math.min(1, dl * 2.5), brain: dl } : {},
+  },
   voices: [
     { name: "Daniel", locale: "en_GB" }, { name: "Samantha", locale: "en_US" }, { name: "Aman", locale: "en_IN" },
     { name: "Rishi", locale: "en_IN" }, { name: "Tara", locale: "en_IN" }, { name: "Lekha", locale: "hi_IN" },
+    { name: "Karen", locale: "en_AU" }, { name: "Moira", locale: "en_IE" },
   ],
   models: [
     { id: "large-v3-turbo-q5_0", label: "Large v3 Turbo", size_mb: 547, note: "Recommended: best accuracy for its speed. Shared with Murmur.", downloaded: true },
@@ -67,6 +84,7 @@ const handlers: Record<string, (a: any) => unknown> = {
   history_delete: (a) => void (history = history.filter((e) => e.time !== a.time)),
   history_clear: () => void (history = []),
   set_login: (a) => a.enabled,
+  finish_setup: () => void (config = { ...config, setup_done: true }),
   "plugin:event|listen": () => Math.floor(Math.random() * 1e6),
   "plugin:event|unlisten": () => null,
 };

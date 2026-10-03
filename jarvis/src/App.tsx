@@ -11,6 +11,7 @@ import Home from "@/pages/Home";
 import Insights from "@/pages/Insights";
 import History from "@/pages/History";
 import Settings from "@/pages/Settings";
+import Setup from "@/pages/Setup";
 
 export type Tab = "home" | "insights" | "history" | "settings";
 const TABS: { id: Tab; label: string; icon: typeof HomeIcon }[] = [
@@ -35,6 +36,8 @@ function statusTone(status: string) {
 export default function App() {
   const [tab, setTab] = useState<Tab>(tabFromHash);
   const app = useAppState();
+  /** Setup opened again from Settings. */
+  const [rerunSetup, setRerunSetup] = useState(false);
 
   useEffect(() => {
     history.replaceState(null, "", `#${tab}`);
@@ -61,10 +64,19 @@ export default function App() {
   const status = app.state?.status ?? "Starting…";
   const key = app.state?.hotkeys.find((h) => h.id === app.state?.config.hotkey)?.label.split(" ").at(-1) ?? "⌥";
   const name = app.state?.config.assistant_name || "Jarvis";
+  const inSetup = !!app.state && (!app.state.config.setup_done || rerunSetup);
+  const endSetup = () => {
+    app.setState((s) => (s ? { ...s, config: { ...s.config, setup_done: true } } : s));
+    setRerunSetup(false);
+    setTab("home");
+  };
 
   return (
     <ThemeProvider attribute="class" defaultTheme="system" enableSystem disableTransitionOnChange>
       <TooltipProvider delayDuration={300}>
+        {inSetup ? (
+          <Setup app={app} onDone={endSetup} />
+        ) : (
         <div className="grid h-screen grid-cols-[232px_1fr] overflow-hidden">
           {/* Translucent in the app (native vibrancy shows through); tinted in a browser. */}
           <aside className="flex flex-col border-r border-sidebar-border bg-sidebar px-3 pb-3 [html.tauri_&]:bg-transparent">
@@ -115,11 +127,12 @@ export default function App() {
                 {tab === "home" && <Home app={app} goTo={setTab} />}
                 {tab === "insights" && <Insights />}
                 {tab === "history" && <History />}
-                {tab === "settings" && <Settings app={app} />}
+                {tab === "settings" && <Settings app={app} onRunSetup={() => setRerunSetup(true)} />}
               </div>
             </div>
           </main>
         </div>
+        )}
         <Toaster position="bottom-center" />
       </TooltipProvider>
     </ThemeProvider>

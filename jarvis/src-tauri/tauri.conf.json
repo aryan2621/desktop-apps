@@ -6,8 +6,8 @@
   "build": {
     "frontendDist": "../dist",
     "devUrl": "http://localhost:5173",
-    "beforeDevCommand": "pnpm ui:dev",
-    "beforeBuildCommand": "pnpm ui:build"
+    "beforeDevCommand": "./scripts/build-llama-server.sh && pnpm ui:dev",
+    "beforeBuildCommand": "./scripts/build-llama-server.sh && pnpm ui:build"
   },
   "app": {
     "withGlobalTauri": true,
@@ -51,6 +51,9 @@
       "minimumSystemVersion": "11.0",
       "signingIdentity": "-",
       "entitlements": "./Entitlements.plist"
-    }
+    },
+    "externalBin": [
+      "binaries/llama-server"
+    ]
   }
 }
