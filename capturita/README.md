@@ -7,8 +7,14 @@ upload it straight to YouTube or Google Drive.
 - **Record**: screen / window / area, mic, system audio, camera bubble, ⌘⇧R from anywhere.
 - **Edit**: trim and cut, speed up clips, auto-zoom that follows your cursor, cursor styles and
   click effects, backgrounds, padding, rounded corners and shadow.
-- **Text**: titles and captions with fonts, colours and animations (fade, rise, pop, slide,
-  blur, typewriter, word by word).
+- **Text**: titles with fonts, colours and animations (fade, rise, pop, slide, blur,
+  typewriter, word by word).
+- **Captions**: made from what's said in the recording, on this Mac (Whisper; the speech model
+  downloads once, 547 MB). Fix any word, style them (font, size, box or shadow, highlight the
+  word being spoken), burn them into the video and/or save an `.srt` file.
+- **Hide private info**: pixelate, blur or cover parts of the screen (emails, passwords, API
+  keys, chats) for as long as you choose. Boxes stay on the content while zooming and are baked
+  into every export; the original recording is never changed.
 - **Audio**: volume per track, fade in/out, background music.
 - **Share**: export to MP4, upload to YouTube or Google Drive.
 

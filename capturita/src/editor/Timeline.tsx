@@ -1,8 +1,8 @@
 import { forwardRef, useEffect, useImperativeHandle, useLayoutEffect, useRef, useState, type PointerEvent as ReactPointerEvent, type ReactNode } from 'react';
-import { AudioLines, Film, Type, ZoomIn } from 'lucide-react';
+import { AudioLines, Captions as CaptionsIcon, EyeOff, Film, Type, ZoomIn } from 'lucide-react';
 import { formatDuration } from '../lib/api';
 import { cx } from '../components/ui';
-import { clipLength, clipStarts, edgeLimits, MIN_ZOOM, snapTo, timedSegments, totalDuration, type Clip, type TextOverlay, type TimedItem, type Zoom } from './model';
+import { clipLength, clipStarts, edgeLimits, HIDE_STYLES, MIN_ZOOM, snapTo, timedSegments, totalDuration, type Caption, type Clip, type HideRegion, type TextOverlay, type TimedItem, type Zoom } from './model';
 import type { Thumbnail } from './useThumbnails';
 import { peakBetween } from './waveform';
 
@@ -38,6 +38,14 @@ interface TimelineProps {
     selectedTextId: string | null;
     onSelectText: (id: string | null) => void;
     onTextsChange: (texts: TextOverlay[], key: string) => void;
+    hides: HideRegion[];
+    selectedHideId: string | null;
+    onSelectHide: (id: string | null) => void;
+    onHidesChange: (hides: HideRegion[], key: string) => void;
+    captions: Caption[];
+    selectedCaptionId: string | null;
+    onSelectCaption: (id: string | null) => void;
+    onCaptionsChange: (captions: Caption[], key: string) => void;
 }
 
 /** A row of timed items (zooms, texts) under the clips. */
@@ -62,7 +70,9 @@ const AUDIO_HEIGHT = 34;
 const GAP = 6;
 const ZOOM_TOP = CLIP_HEIGHT + GAP;
 const TEXT_TOP = ZOOM_TOP + ROW_HEIGHT + GAP;
-const AUDIO_TOP = TEXT_TOP + ROW_HEIGHT + GAP;
+const HIDE_TOP = TEXT_TOP + ROW_HEIGHT + GAP;
+const CAPTION_TOP = HIDE_TOP + ROW_HEIGHT + GAP;
+const AUDIO_TOP = CAPTION_TOP + ROW_HEIGHT + GAP;
 const LANES_HEIGHT = AUDIO_TOP + AUDIO_HEIGHT;
 const HANDLE_WIDTH = 10;
 /** Edges snap to targets within this many pixels; hold Option to drag freely. */
@@ -72,6 +82,8 @@ const LANES: { top: number; height: number; label: string; icon: ReactNode }[] =
     { top: 0, height: CLIP_HEIGHT, label: 'Clips — drag an edge to trim', icon: <Film className='h-3.5 w-3.5' /> },
     { top: ZOOM_TOP, height: ROW_HEIGHT, label: 'Zooms', icon: <ZoomIn className='h-3.5 w-3.5' /> },
     { top: TEXT_TOP, height: ROW_HEIGHT, label: 'Text', icon: <Type className='h-3.5 w-3.5' /> },
+    { top: HIDE_TOP, height: ROW_HEIGHT, label: 'Hidden areas', icon: <EyeOff className='h-3.5 w-3.5' /> },
+    { top: CAPTION_TOP, height: ROW_HEIGHT, label: 'Captions', icon: <CaptionsIcon className='h-3.5 w-3.5' /> },
     { top: AUDIO_TOP, height: AUDIO_HEIGHT, label: 'Audio', icon: <AudioLines className='h-3.5 w-3.5' /> },
 ];
 
@@ -97,6 +109,14 @@ export const Timeline = forwardRef<TimelineHandle, TimelineProps>(function Timel
         selectedTextId,
         onSelectText,
         onTextsChange,
+        hides,
+        selectedHideId,
+        onSelectHide,
+        onHidesChange,
+        captions,
+        selectedCaptionId,
+        onSelectCaption,
+        onCaptionsChange,
     } = props;
     const viewportRef = useRef<HTMLDivElement>(null);
     const containerRef = useRef<HTMLDivElement>(null);
@@ -176,7 +196,7 @@ export const Timeline = forwardRef<TimelineHandle, TimelineProps>(function Timel
     /** Output times that edges snap to: the playhead, clip boundaries, zoom/text edges and cut markers. */
     const snapTargets = (exclude?: string) => {
         const targets = [0, total, lastPlayhead.current, ...starts, ...clips.map((clip, i) => starts[i] + clipLength(clip))];
-        for (const segment of timedSegments(clips, [...zooms, ...texts])) {
+        for (const segment of timedSegments(clips, [...zooms, ...texts, ...hides])) {
             if (segment.item.id !== exclude) targets.push(segment.from, segment.to);
         }
         if (range) targets.push(...range);
@@ -412,6 +432,28 @@ export const Timeline = forwardRef<TimelineHandle, TimelineProps>(function Timel
                             label: (text) => text.text.split('\n')[0] || 'Text',
                             title: (text) => `Text: ${text.text || 'empty'}`,
                             className: { idle: 'border-lane-text/60 bg-lane-text/30 text-fg hover:bg-lane-text/50', selected: 'border-fg bg-lane-text text-black' },
+                        })}
+                        {renderRow<HideRegion>({
+                            top: HIDE_TOP,
+                            items: hides,
+                            selectedItemId: selectedHideId,
+                            onSelectItem: onSelectHide,
+                            onItemsChange: onHidesChange,
+                            kind: 'hidden area',
+                            label: (hide) => HIDE_STYLES.find((s) => s.value === hide.style)?.label ?? 'Hidden',
+                            title: (hide) => `Hidden area (${hide.style})`,
+                            className: { idle: 'border-lane-hide/60 bg-lane-hide/30 text-fg hover:bg-lane-hide/50', selected: 'border-fg bg-lane-hide text-white' },
+                        })}
+                        {renderRow<Caption>({
+                            top: CAPTION_TOP,
+                            items: captions,
+                            selectedItemId: selectedCaptionId,
+                            onSelectItem: onSelectCaption,
+                            onItemsChange: onCaptionsChange,
+                            kind: 'caption',
+                            label: (caption) => caption.text,
+                            title: (caption) => `Caption: ${caption.text}`,
+                            className: { idle: 'border-lane-caption/50 bg-lane-caption/25 text-fg hover:bg-lane-caption/45', selected: 'border-fg bg-lane-caption text-black' },
                         })}
                         {range && (
                             <>

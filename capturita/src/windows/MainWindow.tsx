@@ -2,10 +2,12 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { listen } from '@tauri-apps/api/event';
 import { getCurrentWindow } from '@tauri-apps/api/window';
 import { openPath } from '@tauri-apps/plugin-opener';
-import { FolderOpen } from 'lucide-react';
+import { FolderOpen, ListChecks } from 'lucide-react';
 import { toast } from 'sonner';
 import { api, errorMessage, type Permissions, type Project } from '../lib/api';
 import { PermissionsBanner } from '../components/PermissionsBanner';
+import { SetupFlow } from '../components/SetupFlow';
+import { resumeStep, setResumeStep, setupDone, type SetupStep } from '../lib/setup';
 import { RecorderPanel } from '../components/RecorderPanel';
 import { RecordingsList } from '../components/RecordingsList';
 import { EditorView } from './EditorView';
@@ -16,6 +18,11 @@ export function MainWindow() {
     const [permissions, setPermissions] = useState<Permissions | null>(null);
     const [recordings, setRecordings] = useState<Project[]>([]);
     const [editing, setEditing] = useState<Project | null>(null);
+    // First launch (or a restart in the middle of setup) opens setup; the header reopens it later.
+    const [setup, setSetup] = useState<SetupStep | null>(() => resumeStep() ?? (setupDone() ? null : 'welcome'));
+    useEffect(() => {
+        if (setup) setResumeStep(null);
+    }, [setup]);
     // The main window is hidden while recording, so recorder warnings are shown once it ends.
     const pendingWarnings = useRef<string[]>([]);
 
@@ -80,6 +87,9 @@ export function MainWindow() {
                 </span>
                 <span className='font-semibold tracking-tight'>Capturita</span>
                 <div className='ml-auto flex items-center gap-2'>
+                    <IconButton label='Setup: permissions and caption model' onClick={() => setSetup('welcome')}>
+                        <ListChecks className='h-4 w-4' />
+                    </IconButton>
                     <ThemeToggle />
                     <IconButton label='Open the recordings folder' onClick={async () => openPath(await api.recordingsDir())}>
                         <FolderOpen className='h-4 w-4' />
@@ -101,6 +111,7 @@ export function MainWindow() {
                 </section>
             </main>
 
+            {setup && <SetupFlow initialStep={setup} onClose={() => setSetup(null)} onPermissionsChange={setPermissions} />}
         </div>
     );
 }

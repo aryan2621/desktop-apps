@@ -217,7 +217,7 @@ final class Recorder: NSObject {
                            "width": Int(screenSize.width), "height": Int(screenSize.height)],
                 "systemAudio": track(systemAudio, ok: systemOK),
                 "microphone": microphoneTrack(microphone, relativeTo: clock.startedAt),
-                "camera": track(cameraWriter, ok: cameraDone, size: camera.dimensions),
+                "camera": track(cameraWriter, ok: cameraDone, size: cameraWriter?.videoSize ?? camera.dimensions),
                 "cursor": ["file": "cursor.json"],
             ],
         ]

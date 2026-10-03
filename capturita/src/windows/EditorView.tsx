@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { revealItemInDir } from '@tauri-apps/plugin-opener';
-import { ArrowLeft, Check, CircleAlert, Download, FastForward, FolderOpen, Gauge, Keyboard, Loader2, Minus, Pause, Play, Plus, Redo2, Rewind, Scissors, Trash2, Type, Undo2, X, ZoomIn } from 'lucide-react';
+import { ArrowLeft, Check, CircleAlert, Download, EyeOff, FastForward, FolderOpen, Gauge, Keyboard, Loader2, Minus, Pause, Play, Plus, Redo2, Rewind, Scissors, Trash2, Type, Undo2, X, ZoomIn } from 'lucide-react';
 import { toast } from 'sonner';
 import { api, errorMessage, fileUrl, formatDuration, type CursorData, type Project } from '../lib/api';
 import { Button, IconButton, Popover, RangeInput, cx } from '../components/ui';
@@ -9,6 +9,7 @@ import { ExportDialog } from '../editor/ExportDialog';
 import { ShortcutsSheet } from '../editor/ShortcutsSheet';
 import { Inspector } from '../editor/Inspector';
 import { TextHandle } from '../editor/TextHandle';
+import { HideHandle } from '../editor/HideHandle';
 import { MAX_TIMELINE_ZOOM, MIN_TIMELINE_ZOOM, Timeline, type TimelineHandle } from '../editor/Timeline';
 import { combinePeaks, computePeaks } from '../editor/waveform';
 import { gainOf } from '../editor/audioSchedule';
@@ -16,7 +17,9 @@ import {
     aspectRatio,
     autoZooms,
     defaultEdit,
+    hideActive,
     MIN_ZOOM,
+    outputTimeOf,
     newId,
     normalizeEdit,
     positionAt,
@@ -26,12 +29,15 @@ import {
     textAmount,
     timedSegments,
     totalDuration,
+    type Caption,
+    type Captions,
     type Clip,
     type Edit,
+    type HideRegion,
     type TextOverlay,
     type Zoom,
 } from '../editor/model';
-import { drawFrame, layoutFrame, videoFrame } from '../editor/render';
+import { drawFrame, layoutFrame, screenView, videoFrame } from '../editor/render';
 import { useHistory } from '../editor/useHistory';
 import { usePlayback } from '../editor/usePlayback';
 import { useThumbnails } from '../editor/useThumbnails';
@@ -49,6 +55,8 @@ export function EditorView({ project, onClose }: { project: Project; onClose: ()
     const [selectedId, setSelectedId] = useState<string | null>(null);
     const [selectedZoomId, setSelectedZoomId] = useState<string | null>(null);
     const [selectedTextId, setSelectedTextId] = useState<string | null>(null);
+    const [selectedHideId, setSelectedHideId] = useState<string | null>(null);
+    const [selectedCaptionId, setSelectedCaptionId] = useState<string | null>(null);
     /** True when the recording had no edit.json yet, so auto-zoom runs once the cursor loads. */
     const freshRef = useRef(false);
     const [cropping, setCropping] = useState(false);
@@ -249,11 +257,53 @@ export function EditorView({ project, onClose }: { project: Project; onClose: ()
     const setZooms = useCallback((zooms: Zoom[], key?: string) => history.set((e) => ({ ...e, zooms }), key), [history]);
     const selectedText = edit.texts.find((text) => text.id === selectedTextId) ?? null;
     const setTexts = useCallback((texts: TextOverlay[], key?: string) => history.set((e) => ({ ...e, texts }), key), [history]);
-    /** Only one thing (clip, zoom or text) is selected at a time. */
-    const select = (kind: 'clip' | 'zoom' | 'text', id: string | null) => {
+    const selectedHide = edit.hides.find((hide) => hide.id === selectedHideId) ?? null;
+    const setHides = useCallback((hides: HideRegion[], key?: string) => history.set((e) => ({ ...e, hides }), key), [history]);
+    const setCaptions = useCallback((captions: Captions, key?: string) => history.set((e) => ({ ...e, captions }), key), [history]);
+    const setCaptionItems = useCallback((items: Caption[], key?: string) => history.set((e) => ({ ...e, captions: { ...e.captions, items } }), key), [history]);
+    /** Only one thing (clip, zoom, text, hidden area or caption) is selected at a time. */
+    const select = (kind: 'clip' | 'zoom' | 'text' | 'hide' | 'caption', id: string | null) => {
         setSelectedId(kind === 'clip' ? id : null);
         setSelectedZoomId(kind === 'zoom' ? id : null);
         setSelectedTextId(kind === 'text' ? id : null);
+        setSelectedHideId(kind === 'hide' ? id : null);
+        setSelectedCaptionId(kind === 'caption' ? id : null);
+    };
+    /** Output time of a source time; inside a cut, the start of the next kept clip. */
+    const outputTimeAt = (source: number) => {
+        const index = edit.clips.findIndex((clip) => source < clip.end);
+        if (index < 0) return playback.total;
+        return outputTimeOf(edit.clips, index, Math.max(source, edit.clips[index].start));
+    };
+    /** Selecting a hidden area moves the playhead into it, so its box shows on the preview. */
+    const selectHide = (id: string | null) => {
+        select('hide', id);
+        const hide = edit.hides.find((h) => h.id === id);
+        if (!hide || hideActive(hide, positionAt(edit.clips, playback.now()).source)) return;
+        const segment = timedSegments(edit.clips, [hide])[0];
+        if (segment) playback.seek(Math.min(segment.to, segment.from + 0.05));
+    };
+    const selectCaption = (id: string | null) => select('caption', id);
+    /** Adds a 5-second hidden area at the playhead, in the middle of what's on screen. */
+    const addHide = () => {
+        const { clip, source } = positionAt(edit.clips, playback.now());
+        let start = source;
+        let end = Math.min(clip.end, start + 5);
+        if (end - start < MIN_ZOOM) start = Math.max(clip.start, end - 5);
+        if (end - start < MIN_ZOOM) {
+            toast.info('This clip is too short to hide part of it.');
+            return;
+        }
+        const { crop } = screenView(edit, project, cursor, source, 1, 1);
+        const width = crop.width * 0.4;
+        const height = crop.height * 0.12;
+        const hide: HideRegion = { id: newId(), start, end, style: 'pixelate', x: crop.x + (crop.width - width) / 2, y: crop.y + (crop.height - height) / 2, width, height };
+        setHides([...edit.hides, hide].sort((a, b) => a.start - b.start));
+        select('hide', hide.id);
+    };
+    const deleteHide = (id: string) => {
+        setHides(edit.hides.filter((hide) => hide.id !== id));
+        setSelectedHideId(null);
     };
     const selectClip = (id: string | null) => select('clip', id);
     const selectZoom = (id: string | null) => select('zoom', id);
@@ -313,6 +363,15 @@ export function EditorView({ project, onClose }: { project: Project; onClose: ()
         toast.success('Zooms re-created from your clicks');
     };
     const deleteSelected = () => {
+        if (selectedHide) {
+            deleteHide(selectedHide.id);
+            return;
+        }
+        if (selectedCaptionId) {
+            setCaptionItems(edit.captions.items.filter((c) => c.id !== selectedCaptionId));
+            setSelectedCaptionId(null);
+            return;
+        }
         if (selectedText) {
             deleteText(selectedText.id);
             return;
@@ -349,6 +408,7 @@ export function EditorView({ project, onClose }: { project: Project; onClose: ()
         cancelCut,
         deleteSelected,
         addText,
+        addHide,
         openExport,
         skip,
         shortcuts: () => setShowShortcuts(true),
@@ -383,6 +443,8 @@ export function EditorView({ project, onClose }: { project: Project; onClose: ()
                 actions.cut();
             } else if (!event.metaKey && event.key.toLowerCase() === 't') {
                 actions.addText();
+            } else if (!event.metaKey && event.key.toLowerCase() === 'h') {
+                actions.addHide();
             } else if ((event.key === 'ArrowLeft' || event.key === 'ArrowRight') && !inField && !event.metaKey) {
                 // Sliders keep their own arrow keys.
                 event.preventDefault();
@@ -407,6 +469,8 @@ export function EditorView({ project, onClose }: { project: Project; onClose: ()
 
     const pixelRatio = Math.min(window.devicePixelRatio || 1, MAX_PIXEL_RATIO);
     const cropFrame = cropping ? layoutFrame(edit, project, frameWidth, frameHeight, true) : null;
+    const sourceTime = positionAt(edit.clips, time).source;
+    const exportName = `${project.source.name} ${new Date(project.createdAt).toISOString().slice(0, 16).replace('T', ' ').replace(':', '.')}`;
 
     return (
         <div className='flex h-full flex-col'>
@@ -451,7 +515,14 @@ export function EditorView({ project, onClose }: { project: Project; onClose: ()
                                 onClick={() => !cropping && playback.ready && togglePlay()}
                             />
                             {cropFrame && <CropOverlay frame={cropFrame} crop={edit.crop} onChange={(crop) => change({ crop }, 'crop')} />}
-                            {!cropping && selectedText && textAmount(selectedText, positionAt(edit.clips, time).source) > 0 && (
+                            {!cropping && selectedHide && hideActive(selectedHide, sourceTime) && (
+                                <HideHandle
+                                    hide={selectedHide}
+                                    view={screenView(edit, project, cursor, sourceTime, frameWidth, frameHeight)}
+                                    onChange={(rect) => setHides(edit.hides.map((h) => (h.id === selectedHide.id ? { ...h, ...rect } : h)), `hide-move-${selectedHide.id}`)}
+                                />
+                            )}
+                            {!cropping && selectedText && textAmount(selectedText, sourceTime) > 0 && (
                                 <TextHandle
                                     text={selectedText}
                                     width={frameWidth}
@@ -488,11 +559,24 @@ export function EditorView({ project, onClose }: { project: Project; onClose: ()
                                 <IconButton label='Add text at the playhead (T)' onClick={addText}>
                                     <Type className='h-4 w-4' />
                                 </IconButton>
+                                <IconButton label='Hide part of the screen at the playhead (H)' onClick={addHide}>
+                                    <EyeOff className='h-4 w-4' />
+                                </IconButton>
                                 <span className='mx-1 h-5 w-px bg-line' aria-hidden />
                                 <IconButton
-                                    label={selectedText ? 'Delete selected text (⌫)' : selectedZoom ? 'Delete selected zoom (⌫)' : 'Delete selected clip (⌫)'}
+                                    label={
+                                        selectedHide
+                                            ? 'Delete selected hidden area (⌫)'
+                                            : selectedCaptionId
+                                              ? 'Delete selected caption (⌫)'
+                                              : selectedText
+                                                ? 'Delete selected text (⌫)'
+                                                : selectedZoom
+                                                  ? 'Delete selected zoom (⌫)'
+                                                  : 'Delete selected clip (⌫)'
+                                    }
                                     onClick={deleteSelected}
-                                    disabled={!selectedText && !selectedZoom && (!selected || edit.clips.length <= 1)}
+                                    disabled={!selectedHide && !selectedCaptionId && !selectedText && !selectedZoom && (!selected || edit.clips.length <= 1)}
                                 >
                                     <Trash2 className='h-4 w-4' />
                                 </IconButton>
@@ -608,6 +692,14 @@ export function EditorView({ project, onClose }: { project: Project; onClose: ()
                             selectedTextId={selectedTextId}
                             onSelectText={selectText}
                             onTextsChange={setTexts}
+                            hides={edit.hides}
+                            selectedHideId={selectedHideId}
+                            onSelectHide={selectHide}
+                            onHidesChange={setHides}
+                            captions={edit.captions.items}
+                            selectedCaptionId={selectedCaptionId}
+                            onSelectCaption={selectCaption}
+                            onCaptionsChange={setCaptionItems}
                         />
                     </div>
                 </div>
@@ -632,6 +724,16 @@ export function EditorView({ project, onClose }: { project: Project; onClose: ()
                         hasSystemAudio={!!project.tracks.systemAudio}
                         hasMicrophone={!!project.tracks.microphone}
                         projectId={project.id}
+                        project={project}
+                        projectName={exportName}
+                        selectedHide={selectedHide}
+                        onAddHide={addHide}
+                        onHideChange={(hide, key) => setHides(edit.hides.map((h) => (h.id === hide.id ? hide : h)), key)}
+                        onHideDelete={deleteHide}
+                        selectedCaptionId={selectedCaptionId}
+                        onSelectCaption={selectCaption}
+                        onCaptionsChange={setCaptions}
+                        onSeekSource={(source) => playback.seek(outputTimeAt(source))}
                     />
                 </aside>
             </div>

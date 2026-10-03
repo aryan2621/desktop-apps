@@ -1,9 +1,12 @@
 import { useEffect, useState, type ReactNode } from 'react';
-import { AudioWaveform, Ban, Blend, Bold, Camera, Check, Circle, CircleDot, Crop, Crosshair, Frame, Layers, Mic, MousePointer2, MousePointerClick, PaintBucket, Palette, Pointer, Radio, RotateCcw, Square, Trash2, Type, Volume2, VolumeX, Wand2, ZoomIn } from 'lucide-react';
+import { AudioWaveform, Ban, Captions as CaptionsIcon, EyeOff, Blend, Bold, Camera, Check, Circle, CircleDot, Crop, Crosshair, Frame, Layers, Mic, MousePointer2, MousePointerClick, PaintBucket, Palette, Pointer, Radio, RotateCcw, Square, Trash2, Type, Volume2, VolumeX, Wand2, ZoomIn } from 'lucide-react';
 import { Button, Select, Slider, Switch, cx } from '../components/ui';
 import { backgroundCss } from './render';
 import { MusicPanel } from './MusicPanel';
-import { ASPECTS, FONTS, fontStack, GRADIENTS, TEXT_ANIMATIONS, type CameraCorner, type ClickSoundType, type ClickStyle, type CursorShape, type Edit, type FontKey, type TextOverlay, type TrackLevel, type Zoom } from './model';
+import { HidePanel } from './HidePanel';
+import { CaptionsPanel } from './CaptionsPanel';
+import type { Project } from '../lib/api';
+import { ASPECTS, FONTS, fontStack, GRADIENTS, TEXT_ANIMATIONS, type CameraCorner, type Captions, type ClickSoundType, type ClickStyle, type CursorShape, type Edit, type FontKey, type HideRegion, type TextOverlay, type TrackLevel, type Zoom } from './model';
 
 interface InspectorProps {
     edit: Edit;
@@ -24,6 +27,17 @@ interface InspectorProps {
     hasSystemAudio: boolean;
     hasMicrophone: boolean;
     projectId: string;
+    project: Project;
+    projectName: string;
+    selectedHide: HideRegion | null;
+    onAddHide: () => void;
+    onHideChange: (hide: HideRegion, key: string) => void;
+    onHideDelete: (id: string) => void;
+    selectedCaptionId: string | null;
+    onSelectCaption: (id: string | null) => void;
+    onCaptionsChange: (captions: Captions, key: string) => void;
+    /** Jump to a source time. */
+    onSeekSource: (source: number) => void;
 }
 
 const TEXT_COLORS = ['#ffffff', '#111111', '#7c5cff', '#ffd200', '#ff5c7a', '#38ef7d'];
@@ -32,7 +46,7 @@ const TEXT_POSITIONS = [0.12, 0.5, 0.88];
 const TEXT_ROWS = ['Top', 'Middle', 'Bottom'];
 const TEXT_COLUMNS = ['left', 'centre', 'right'];
 
-type Tab = 'background' | 'frame' | 'layout' | 'zoom' | 'text' | 'camera' | 'cursor' | 'audio';
+type Tab = 'background' | 'frame' | 'layout' | 'zoom' | 'text' | 'hide' | 'captions' | 'camera' | 'cursor' | 'audio';
 
 export function Inspector({
     edit,
@@ -53,6 +67,16 @@ export function Inspector({
     hasSystemAudio,
     hasMicrophone,
     projectId,
+    project,
+    projectName,
+    selectedHide,
+    onAddHide,
+    onHideChange,
+    onHideDelete,
+    selectedCaptionId,
+    onSelectCaption,
+    onCaptionsChange,
+    onSeekSource,
 }: InspectorProps) {
     const [tab, setTab] = useState<Tab>('background');
     // Selecting a zoom on the timeline opens its settings.
@@ -64,12 +88,21 @@ export function Inspector({
     useEffect(() => {
         if (selectedTextId) setTab('text');
     }, [selectedTextId]);
+    const selectedHideId = selectedHide?.id;
+    useEffect(() => {
+        if (selectedHideId) setTab('hide');
+    }, [selectedHideId]);
+    useEffect(() => {
+        if (selectedCaptionId) setTab('captions');
+    }, [selectedCaptionId]);
     const tabs: { value: Tab; label: string; icon: ReactNode }[] = [
         { value: 'background', label: 'Background', icon: <Palette className='h-4 w-4' /> },
         { value: 'frame', label: 'Frame', icon: <Frame className='h-4 w-4' /> },
         { value: 'layout', label: 'Layout & crop', icon: <Crop className='h-4 w-4' /> },
         { value: 'zoom', label: 'Zoom', icon: <ZoomIn className='h-4 w-4' /> },
         { value: 'text', label: 'Text', icon: <Type className='h-4 w-4' /> },
+        { value: 'captions', label: 'Captions', icon: <CaptionsIcon className='h-4 w-4' /> },
+        { value: 'hide', label: 'Hide private info', icon: <EyeOff className='h-4 w-4' /> },
         ...(hasCamera ? [{ value: 'camera' as Tab, label: 'Camera', icon: <Camera className='h-4 w-4' /> }] : []),
         { value: 'cursor', label: 'Cursor', icon: <MousePointer2 className='h-4 w-4' /> },
         // Always shown: background music works even on recordings without sound.
@@ -646,6 +679,30 @@ export function Inspector({
                             )}
                         </div>
                     </Section>
+                )}
+
+                {tab === 'hide' && (
+                    <HidePanel
+                        hides={edit.hides}
+                        selected={selectedHide}
+                        duration={project.duration}
+                        onAdd={onAddHide}
+                        onChange={onHideChange}
+                        onDelete={onHideDelete}
+                    />
+                )}
+
+                {tab === 'captions' && (
+                    <CaptionsPanel
+                        project={project}
+                        projectName={projectName}
+                        captions={edit.captions}
+                        clips={edit.clips}
+                        selectedId={selectedCaptionId}
+                        onChange={onCaptionsChange}
+                        onSelect={onSelectCaption}
+                        onSeek={onSeekSource}
+                    />
                 )}
             </div>
             <nav className='flex w-[52px] shrink-0 flex-col items-center gap-1 border-l border-line bg-panel py-3' role='tablist' aria-orientation='vertical'>

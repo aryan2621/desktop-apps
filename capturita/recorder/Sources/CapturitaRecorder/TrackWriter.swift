@@ -68,6 +68,8 @@ final class TrackWriter {
     private(set) var lastTime: CMTime?
     /// End of the last appended sample (its timestamp plus its duration).
     private var endTime: CMTime?
+    /// Pixel size the video is written at (known once the first frame arrives).
+    private(set) var videoSize: CGSize?
     private(set) var failed: Error?
 
     init(url: URL, kind: Kind, clock: RecordingClock) {
@@ -112,8 +114,22 @@ final class TrackWriter {
         let format = CMSampleBufferGetFormatDescription(buffer)
 
         switch kind {
-        case let .video(width, height, fps):
+        case let .video(maxWidth, maxHeight, fps):
             fileType = .mov
+            // The given size is a limit; the shape always comes from the frames themselves. A
+            // camera can deliver a different size than its format said before it started
+            // (e.g. 1280×720 instead of 640×480), and writing it at the wrong shape squashes it.
+            var width = maxWidth
+            var height = maxHeight
+            if let format {
+                let dims = CMVideoFormatDescriptionGetDimensions(format)
+                if dims.width > 0, dims.height > 0 {
+                    let scale = min(1, Double(maxWidth) / Double(dims.width), Double(maxHeight) / Double(dims.height))
+                    width = Int(Double(dims.width) * scale) / 2 * 2
+                    height = Int(Double(dims.height) * scale) / 2 * 2
+                }
+            }
+            videoSize = CGSize(width: width, height: height)
             settings = [
                 AVVideoCodecKey: AVVideoCodecType.h264,
                 AVVideoWidthKey: width,

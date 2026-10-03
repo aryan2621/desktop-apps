@@ -87,9 +87,8 @@ final class CameraBubble: NSObject {
 
     func startRecording(to url: URL, clock: RecordingClock) {
         guard session != nil else { return }
-        let width = Int(dimensions.width) / 2 * 2
-        let height = Int(dimensions.height) / 2 * 2
-        let writer = TrackWriter(url: url, kind: .video(width: width, height: height, fps: 30), clock: clock)
+        // Up to 1080p; the writer takes the real size and shape from the first frame.
+        let writer = TrackWriter(url: url, kind: .video(width: 1920, height: 1080, fps: 30), clock: clock)
         writerLock.withLock { self.writer = writer }
     }
 

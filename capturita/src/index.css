@@ -38,6 +38,8 @@
   --lane-text: #f59e0b;
   --lane-audio: #14b8a6;
   --lane-cut: #f87171;
+  --lane-hide: #ec4899;
+  --lane-caption: #38bdf8;
   --shadow-lg: 0 20px 50px -12px rgb(0 0 0 / 0.6);
   --scrollbar: #2a2a36;
 }
@@ -66,6 +68,8 @@
   --lane-text: #d97706;
   --lane-audio: #0d9488;
   --lane-cut: #ef4444;
+  --lane-hide: #db2777;
+  --lane-caption: #0284c7;
   --shadow-lg: 0 20px 50px -16px rgb(20 20 40 / 0.25);
   --scrollbar: #cdcdd8;
 }
@@ -98,6 +102,8 @@
   --color-lane-zoom: var(--lane-zoom);
   --color-lane-text: var(--lane-text);
   --color-lane-audio: var(--lane-audio);
+  --color-lane-hide: var(--lane-hide);
+  --color-lane-caption: var(--lane-caption);
   --color-lane-cut: var(--lane-cut);
   --shadow-panel: var(--shadow-lg);
   --font-sans: -apple-system, BlinkMacSystemFont, "SF Pro Text", "Inter", system-ui, sans-serif;

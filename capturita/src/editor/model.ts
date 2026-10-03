@@ -24,8 +24,80 @@ export interface Edit {
     /** Zoom amount used for auto-zoom and newly added zooms. */
     zoomScale: number;
     texts: TextOverlay[];
+    /** Parts of the screen hidden for privacy (pixelated, blurred or covered). */
+    hides: HideRegion[];
+    captions: Captions;
     audio: AudioMix;
 }
+
+export type HideStyle = 'pixelate' | 'blur' | 'solid';
+
+export const HIDE_STYLES: { value: HideStyle; label: string; hint: string }[] = [
+    { value: 'pixelate', label: 'Pixelate', hint: 'Large blocks: the usual "censored" look' },
+    { value: 'blur', label: 'Blur', hint: 'Soft blur; fine for faces and photos' },
+    { value: 'solid', label: 'Solid', hint: 'A plain box. The only fully safe choice for passwords and keys' },
+];
+
+/**
+ * A part of the recording hidden for privacy. Times are source times, like zooms; the box is
+ * normalized to the whole recorded screen (like the crop), so it stays on the content while
+ * zooming and cropping.
+ */
+export interface HideRegion extends NormalizedRect {
+    id: string;
+    start: number;
+    end: number;
+    style: HideStyle;
+}
+
+/** One spoken word with its timing (source seconds). */
+export interface CaptionWord {
+    start: number;
+    end: number;
+    text: string;
+}
+
+/** One caption on screen. Times are source times; `words` drive the word highlight. */
+export interface Caption {
+    id: string;
+    start: number;
+    end: number;
+    text: string;
+    words: CaptionWord[];
+}
+
+export type CaptionBackground = 'box' | 'shadow' | 'none';
+
+export interface CaptionStyle {
+    font: FontKey;
+    /** Font size as a fraction of the frame's shorter side. */
+    size: number;
+    color: string;
+    bold: boolean;
+    background: CaptionBackground;
+    position: 'bottom' | 'top';
+    /** Colour of the word being spoken, or null for no highlight. */
+    highlight: string | null;
+}
+
+export interface Captions {
+    /** Burn the captions into the video. */
+    visible: boolean;
+    /** Language spoken ("auto" detects it). */
+    language: string;
+    style: CaptionStyle;
+    items: Caption[];
+}
+
+export const DEFAULT_CAPTION_STYLE: CaptionStyle = {
+    font: 'system',
+    size: 0.05,
+    color: '#ffffff',
+    bold: true,
+    background: 'box',
+    position: 'bottom',
+    highlight: '#ffd200',
+};
 
 /** Text shown over the video. Times are source times, like zooms. */
 export interface TextOverlay {
@@ -212,6 +284,8 @@ export function defaultEdit(project: Project): Edit {
         zooms: [],
         zoomScale: DEFAULT_ZOOM_SCALE,
         texts: [],
+        hides: [],
+        captions: { visible: true, language: 'auto', style: DEFAULT_CAPTION_STYLE, items: [] },
         audio: { system: { volume: 1, muted: false }, microphone: { volume: 1, muted: false }, fadeIn: 0, fadeOut: 0, music: null },
     };
 }
@@ -231,6 +305,13 @@ export function normalizeEdit(project: Project, raw: unknown): Edit {
     edit.texts = Array.isArray(edit.texts)
         ? edit.texts.filter((t) => t.end - t.start >= MIN_ZOOM / 2).map((t) => ({ ...t, font: t.font ?? 'system', animation: t.animation ?? 'rise' }))
         : [];
+    edit.hides = Array.isArray(edit.hides) ? edit.hides.filter((h) => h.end - h.start >= MIN_ZOOM / 2) : [];
+    edit.captions = {
+        ...base.captions,
+        ...edit.captions,
+        style: { ...base.captions.style, ...edit.captions?.style },
+        items: Array.isArray(edit.captions?.items) ? edit.captions.items : [],
+    };
     edit.audio = {
         ...base.audio,
         ...edit.audio,
@@ -520,4 +601,86 @@ export function snapTo(value: number, targets: number[], threshold: number): { v
         if (Math.abs(target - value) <= threshold && (best === null || Math.abs(target - value) < Math.abs(best - value))) best = target;
     }
     return best === null ? { value, snapped: null } : { value: best, snapped: best };
+}
+
+// ---- Hide regions ----
+
+export const hideActive = (hide: HideRegion, t: number) => t >= hide.start && t <= hide.end;
+
+// ---- Captions ----
+
+/** Longest caption line, in characters, before starting a new caption. */
+const CAPTION_CHARS = 42;
+/** A pause longer than this starts a new caption. */
+const CAPTION_GAP = 0.7;
+const CAPTION_MAX_SECONDS = 5;
+/** Hesitations dropped from captions. */
+const FILLER = /^(u+[hm]+|e+r+m*|hm+|mm+)[,.!?]*$/i;
+
+/**
+ * Groups transcribed words into captions the way subtitles are usually cut: at most ~two short
+ * lines, a new caption after a pause or the end of a sentence, never longer than a few seconds.
+ */
+export function groupCaptions(words: CaptionWord[], removeFillers = true): Caption[] {
+    const captions: Caption[] = [];
+    let current: CaptionWord[] = [];
+    const flush = () => {
+        if (current.length === 0) return;
+        captions.push({
+            id: newId(),
+            start: current[0].start,
+            end: current[current.length - 1].end,
+            text: current.map((w) => w.text).join(' '),
+            words: current,
+        });
+        current = [];
+    };
+    for (const word of words) {
+        const text = word.text.trim();
+        if (!text || (removeFillers && FILLER.test(text))) continue;
+        const last = current[current.length - 1];
+        if (last) {
+            const length = current.reduce((n, w) => n + w.text.length + 1, 0) + text.length;
+            const sentenceEnded = /[.!?]$/.test(last.text) && current.length >= 3;
+            if (word.start - last.end > CAPTION_GAP || length > CAPTION_CHARS || sentenceEnded || word.end - current[0].start > CAPTION_MAX_SECONDS) flush();
+        }
+        current.push({ ...word, text });
+    }
+    flush();
+    return captions;
+}
+
+/**
+ * After the text of a caption is edited, spreads its new words over the caption's time in
+ * proportion to their length, so the word highlight still roughly follows the speech.
+ */
+export function retimeCaption(caption: Caption, text: string): Caption {
+    const tokens = text.split(/\s+/).filter(Boolean);
+    const total = tokens.reduce((n, t) => n + t.length, 0) || 1;
+    const duration = caption.end - caption.start;
+    let t = caption.start;
+    const words = tokens.map((token) => {
+        const length = (token.length / total) * duration;
+        const word = { start: t, end: t + length, text: token };
+        t += length;
+        return word;
+    });
+    return { ...caption, text, words };
+}
+
+/** The caption on screen at source time t, if any. */
+export const captionAt = (captions: Caption[], t: number) => captions.find((c) => t >= c.start && t < c.end) ?? null;
+
+const srtTime = (seconds: number) => {
+    const ms = Math.max(0, Math.round(seconds * 1000));
+    const pad = (n: number, width = 2) => n.toString().padStart(width, '0');
+    return `${pad(Math.floor(ms / 3_600_000))}:${pad(Math.floor(ms / 60_000) % 60)}:${pad(Math.floor(ms / 1000) % 60)},${pad(ms % 1000, 3)}`;
+};
+
+/** Captions as an .srt file on the edited timeline (cuts and speed applied). */
+export function toSrt(clips: Clip[], captions: Caption[]) {
+    const cues = timedSegments(clips, captions)
+        .filter((s) => s.to - s.from >= 0.2 && s.item.text.trim())
+        .sort((a, b) => a.from - b.from);
+    return cues.map((s, i) => `${i + 1}\n${srtTime(s.from)} --> ${srtTime(s.to)}\n${s.item.text.trim()}\n`).join('\n');
 }

@@ -1,3 +1,4 @@
+mod captions;
 mod export;
 mod google;
 mod helper;
@@ -26,6 +27,7 @@ pub fn run() {
         .manage(recording::Recording::default())
         .manage(export::Export::default())
         .manage(google::Google::default())
+        .manage(captions::Captions::default())
         .setup(move |app| {
             if let Err(error) = app.global_shortcut().register(record_shortcut) {
                 eprintln!("Could not register the ⌘⇧R shortcut: {error}");
@@ -48,6 +50,11 @@ pub fn run() {
             recording::recordings_dir,
             recording::restart_app,
             recording::log_debug,
+            captions::caption_model_status,
+            captions::transcribe,
+            captions::download_caption_model,
+            captions::cancel_transcription,
+            captions::save_export_text,
             export::export_open,
             export::export_write,
             export::export_close,

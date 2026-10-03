@@ -1,5 +1,5 @@
 import type { CursorData, Project } from '../lib/api';
-import { fontStack, textFrame, zoomAmount, type TextFrame, type Background, type CursorShape, type Edit, type NormalizedRect, type TextOverlay } from './model';
+import { captionAt, fontStack, hideActive, textFrame, zoomAmount, type Caption, type CaptionStyle, type HideRegion, type TextFrame, type Background, type CursorShape, type Edit, type NormalizedRect, type TextOverlay } from './model';
 
 /** Cursor height in screen points before scaling. */
 const CURSOR_POINTS = 22;
@@ -98,11 +98,14 @@ export function zoomViewport(edit: Edit, cursor: CursorData | null, t: number, c
     };
 }
 
-export function drawFrame(ctx: CanvasRenderingContext2D, width: number, height: number, inputs: FrameInputs): Rect {
-    const { edit, project, screen, camera, cursor, time } = inputs;
-    const baseCrop = inputs.ignoreCrop ? FULL : edit.crop;
+/**
+ * Which part of the recorded screen is visible at source time t (crop and zoom applied, normalized
+ * to the whole recording), and where it is drawn in a frame of the given size.
+ */
+export function screenView(edit: Edit, project: Project, cursor: CursorData | null, time: number, width: number, height: number, ignoreCrop = false) {
+    const baseCrop = ignoreCrop ? FULL : edit.crop;
     // Zooming narrows the visible part of the screen further.
-    const view = inputs.ignoreCrop ? FULL : zoomViewport(edit, cursor, time, baseCrop);
+    const view = ignoreCrop ? FULL : zoomViewport(edit, cursor, time, baseCrop);
     const crop = {
         x: baseCrop.x + view.x * baseCrop.width,
         y: baseCrop.y + view.y * baseCrop.height,
@@ -110,7 +113,24 @@ export function drawFrame(ctx: CanvasRenderingContext2D, width: number, height: 
         height: baseCrop.height * view.height,
     };
     // Layout uses the un-zoomed crop so the frame keeps its size while zooming.
-    const content = layoutFrame(edit, project, width, height, inputs.ignoreCrop);
+    const content = layoutFrame(edit, project, width, height, ignoreCrop);
+    return { crop, content };
+}
+
+/** A box normalized to the recorded screen, in frame pixels for the given view. */
+export function screenRectToFrame(rect: NormalizedRect, view: { crop: NormalizedRect; content: Rect }): Rect {
+    const { crop, content } = view;
+    return {
+        x: content.x + ((rect.x - crop.x) / crop.width) * content.width,
+        y: content.y + ((rect.y - crop.y) / crop.height) * content.height,
+        width: (rect.width / crop.width) * content.width,
+        height: (rect.height / crop.height) * content.height,
+    };
+}
+
+export function drawFrame(ctx: CanvasRenderingContext2D, width: number, height: number, inputs: FrameInputs): Rect {
+    const { edit, project, screen, camera, cursor, time } = inputs;
+    const { crop, content } = screenView(edit, project, cursor, time, width, height, inputs.ignoreCrop);
     const radius = Math.min(edit.radius * width, content.width / 2, content.height / 2);
 
     ctx.save();
@@ -145,6 +165,10 @@ export function drawFrame(ctx: CanvasRenderingContext2D, width: number, height: 
             content.width,
             content.height
         );
+        // Hidden areas go over the screen but under the cursor (the cursor is never private).
+        for (const hide of edit.hides) {
+            if (hideActive(hide, time)) drawHide(ctx, hide, screen, screenRectToFrame(hide, { crop, content }), width, height);
+        }
     }
 
     // Cursor and clicks, mapped from the recorded area into the cropped screen.
@@ -224,8 +248,165 @@ export function drawFrame(ctx: CanvasRenderingContext2D, width: number, height: 
         if (frame.alpha > 0 && text.text.trim()) drawText(ctx, text, width, height, frame);
     }
 
+    if (edit.captions.visible) {
+        const caption = captionAt(edit.captions.items, time);
+        if (caption && caption.text.trim()) drawCaption(ctx, caption, edit.captions.style, time, width, height);
+    }
+
     ctx.restore();
     return content;
+}
+
+// ---- Hide regions ----
+
+/** Two scratch canvases for shrinking a region step by step (frames are drawn one at a time). */
+const scratch: HTMLCanvasElement[] = [];
+const scratchCanvas = (index: number, width: number, height: number) => {
+    scratch[index] ??= document.createElement('canvas');
+    const canvas = scratch[index];
+    if (canvas.width < width) canvas.width = width;
+    if (canvas.height < height) canvas.height = height;
+    return canvas;
+};
+
+/**
+ * Shrinks part of the screen to `cellsX` × `cellsY` pixels, each the average of the area it
+ * covers. Browsers shrink a big step by sampling a few pixels (thin text mostly disappears into
+ * the background), so it's halved repeatedly instead, which averages everything.
+ */
+function averageDown(screen: FrameSource, area: Rect, cellsX: number, cellsY: number) {
+    let source: CanvasImageSource = screen.image;
+    let sx = area.x;
+    let sy = area.y;
+    let w = area.width;
+    let h = area.height;
+    let index = 0;
+    while (true) {
+        const nw = Math.max(cellsX, Math.ceil(w / 2));
+        const nh = Math.max(cellsY, Math.ceil(h / 2));
+        const canvas = scratchCanvas(index, nw, nh);
+        const c = canvas.getContext('2d');
+        if (!c) return null;
+        c.imageSmoothingEnabled = true;
+        c.imageSmoothingQuality = 'high';
+        c.clearRect(0, 0, nw, nh);
+        c.drawImage(source, sx, sy, w, h, 0, 0, nw, nh);
+        source = canvas;
+        sx = 0;
+        sy = 0;
+        w = nw;
+        h = nh;
+        index = 1 - index;
+        if (nw === cellsX && nh === cellsY) return { canvas, width: nw, height: nh };
+    }
+}
+
+/**
+ * Hides a part of the screen. Pixelate and blur shrink that part of the recording to a few
+ * pixels and stretch it back, so nothing readable survives; solid covers it completely.
+ */
+function drawHide(ctx: CanvasRenderingContext2D, hide: HideRegion, screen: FrameSource, box: Rect, width: number, height: number) {
+    if (box.width < 1 || box.height < 1) return;
+    ctx.save();
+    ctx.beginPath();
+    ctx.rect(box.x, box.y, box.width, box.height);
+    ctx.clip();
+    if (hide.style === 'solid') {
+        ctx.fillStyle = '#1c1c1e';
+        ctx.fillRect(box.x, box.y, box.width, box.height);
+        ctx.restore();
+        return;
+    }
+    // Block size relative to the frame, so it looks the same in the preview and in the export.
+    const block = Math.max(4, Math.min(width, height) * (hide.style === 'pixelate' ? 0.02 : 0.05));
+    const cellsX = Math.max(1, Math.round(box.width / block));
+    const cellsY = Math.max(1, Math.round(box.height / block));
+    const area = { x: hide.x * screen.width, y: hide.y * screen.height, width: hide.width * screen.width, height: hide.height * screen.height };
+    const shrunk = averageDown(screen, area, cellsX, cellsY);
+    if (!shrunk) {
+        ctx.restore();
+        return;
+    }
+    const small = shrunk.canvas;
+    if (hide.style === 'pixelate') {
+        ctx.imageSmoothingEnabled = false;
+        ctx.drawImage(small, 0, 0, cellsX, cellsY, box.x, box.y, box.width, box.height);
+    } else {
+        // Stretching a tiny image with smoothing reads as a heavy blur; a little extra softening
+        // hides the bilinear "grid" where the browser supports canvas filters.
+        ctx.imageSmoothingEnabled = true;
+        ctx.imageSmoothingQuality = 'high';
+        ctx.filter = `blur(${(block * 0.35).toFixed(1)}px)`;
+        const bleed = block;
+        ctx.drawImage(small, 0, 0, cellsX, cellsY, box.x - bleed / 2, box.y - bleed / 2, box.width + bleed, box.height + bleed);
+        ctx.filter = 'none';
+    }
+    ctx.restore();
+}
+
+// ---- Captions ----
+
+const CAPTION_LINE_HEIGHT = 1.25;
+/** Captions wrap at this share of the frame width. */
+const CAPTION_MAX_WIDTH = 0.82;
+
+/** Lays a caption out in lines of words that fit the frame (shared by drawing and measuring). */
+export function layoutCaption(ctx: CanvasRenderingContext2D, caption: Caption, style: CaptionStyle, width: number, height: number) {
+    const fontSize = Math.max(8, style.size * Math.min(width, height));
+    ctx.font = `${style.bold ? 700 : 500} ${fontSize}px ${fontStack(style.font)}`;
+    const words = caption.words.length > 0 ? caption.words : caption.text.split(/\s+/).filter(Boolean).map((text) => ({ start: caption.start, end: caption.end, text }));
+    const space = ctx.measureText(' ').width;
+    const maxWidth = width * CAPTION_MAX_WIDTH;
+    const lines: { words: { text: string; start: number; end: number; x: number; width: number }[]; width: number }[] = [];
+    let line: (typeof lines)[number] = { words: [], width: 0 };
+    for (const word of words) {
+        const w = ctx.measureText(word.text).width;
+        const next = line.width + (line.words.length ? space : 0) + w;
+        if (line.words.length && next > maxWidth) {
+            lines.push(line);
+            line = { words: [], width: 0 };
+        }
+        const x = line.width + (line.words.length ? space : 0);
+        line.words.push({ ...word, x, width: w });
+        line.width = x + w;
+    }
+    if (line.words.length) lines.push(line);
+    const lineHeight = fontSize * CAPTION_LINE_HEIGHT;
+    const blockHeight = lines.length * lineHeight;
+    const margin = Math.min(width, height) * 0.06;
+    const top = style.position === 'top' ? margin : height - margin - blockHeight;
+    return { fontSize, lines, lineHeight, top };
+}
+
+function drawCaption(ctx: CanvasRenderingContext2D, caption: Caption, style: CaptionStyle, time: number, width: number, height: number) {
+    const { fontSize, lines, lineHeight, top } = layoutCaption(ctx, caption, style, width, height);
+    ctx.save();
+    ctx.textBaseline = 'middle';
+    ctx.textAlign = 'left';
+    const padX = fontSize * 0.4;
+    const padY = fontSize * 0.12;
+    lines.forEach((line, i) => {
+        const left = (width - line.width) / 2;
+        const centreY = top + i * lineHeight + lineHeight / 2;
+        if (style.background === 'box') {
+            ctx.fillStyle = 'rgba(0, 0, 0, 0.72)';
+            const box = { x: left - padX, y: centreY - lineHeight / 2 - padY, width: line.width + padX * 2, height: lineHeight + padY * 2 };
+            roundRect(ctx, box, fontSize * 0.25);
+            ctx.fill();
+        }
+        if (style.background === 'shadow') {
+            ctx.shadowColor = 'rgba(0, 0, 0, 0.85)';
+            ctx.shadowBlur = fontSize * 0.25;
+            ctx.shadowOffsetY = fontSize * 0.05;
+        }
+        for (const word of line.words) {
+            const speaking = style.highlight && time >= word.start && time < word.end;
+            ctx.fillStyle = speaking ? style.highlight! : style.color;
+            ctx.fillText(word.text, left + word.x, centreY);
+        }
+        ctx.shadowColor = 'transparent';
+    });
+    ctx.restore();
 }
 
 const TEXT_LINE_HEIGHT = 1.2;

@@ -104,6 +104,13 @@ export interface RecordingStatus {
     pausedAt: number | null;
 }
 
+/** Progress while making captions. */
+export interface CaptionProgress {
+    phase: 'download' | 'load' | 'transcribe';
+    /** 0 to 1. */
+    progress: number;
+}
+
 export type Destination = 'youtube' | 'drive';
 export type Privacy = 'private' | 'unlisted' | 'public';
 
@@ -160,6 +167,16 @@ export const api = {
     recordingsDir: () => invoke<string>('recordings_dir'),
     restart: () => invoke<void>('restart_app'),
     log: (message: string) => invoke<void>('log_debug', { message }).catch(() => {}),
+
+    captionModel: () => invoke<{ downloaded: boolean; sizeMb: number }>('caption_model_status'),
+    /** Transcribes 16 kHz mono audio into timed words (progress: `captions-progress` events). */
+    transcribe: (audio: Float32Array, language: string) =>
+        invoke<{ start: number; end: number; text: string }[]>('transcribe', new Uint8Array(audio.buffer, audio.byteOffset, audio.byteLength), { headers: { language } }),
+    cancelTranscription: () => invoke<void>('cancel_transcription'),
+    /** Downloads the speech model ahead of time (progress: `captions-progress` events). */
+    downloadCaptionModel: () => invoke<void>('download_caption_model'),
+    /** Saves a text file in ~/Movies/Capturita/Exports; returns its path. */
+    saveExportText: (name: string, extension: string, contents: string) => invoke<string>('save_export_text', { name, extension, contents }),
 
     googleStatus: () => invoke<GoogleStatus>('google_status'),
     googleOpenConfigFolder: () => invoke<void>('google_open_config_folder'),
