@@ -9,6 +9,8 @@ export interface Config {
   input_device: string | null;
   /** "builtin" (the AI bundled with Jarvis) or "ollama". */
   brain: "builtin" | "ollama";
+  /** Which built-in model: "8b" (default) or "4b" (lighter). */
+  builtin_model: string;
   ollama_url: string;
   llm_model: string;
   keep_alive: string;
@@ -24,7 +26,22 @@ export interface Config {
   conversation_timeout_seconds: number;
   speech_threshold: number;
   save_history: boolean;
+  /** Act on the Mac: apps, websites, timers, reminders, calendar, volume, files… */
+  actions: boolean;
+  /** Web search, reading pages and weather. Only search words and addresses leave the Mac. */
+  web_access: boolean;
+  /** City for the weather when none is named; empty = guessed from the connection. */
+  location: string;
   setup_done: boolean;
+}
+
+export interface BrainInfo {
+  id: string;
+  label: string;
+  size_mb: number;
+  min_ram_gb: number;
+  note: string;
+  downloaded: boolean;
 }
 
 export interface ModelInfo {
@@ -51,6 +68,8 @@ export interface AppState {
   voices: Voice[];
   models: ModelInfo[];
   devices: string[];
+  brains: BrainInfo[];
+  ram_gb: number;
   hotkeys: { id: string; label: string }[];
   login_enabled: boolean;
   version: string;
@@ -67,9 +86,11 @@ export interface Entry {
   first_word_ms: number;
   total_ms: number;
   model: string;
+  /** What was done to answer, e.g. "Opening Slack". */
+  actions?: string[];
 }
 
-/** Live answer as it streams in: "thinking" → "speaking" (growing text) → "done". */
+/** Live answer as it streams in: "thinking" (reply = what it is doing, if anything) → "speaking" (growing text) → "done". */
 export interface Reply {
   state: "thinking" | "speaking" | "done";
   question: string;
@@ -95,6 +116,7 @@ export const api = {
   openPrivacy: (pane: "accessibility" | "microphone") => invoke<void>("open_privacy", { pane }),
   openVoiceSettings: () => invoke<void>("open_voice_settings"),
   openDataFolder: () => invoke<void>("open_data_folder"),
+  confirm: (yes: boolean) => invoke<void>("confirm_answer", { yes }),
 };
 
 export const events = {
@@ -103,6 +125,9 @@ export const events = {
   navigate: (cb: (tab: string) => void) => listen<string>("navigate", (e) => cb(e.payload)),
   reply: (cb: (r: Reply) => void) => listen<Reply>("reply", (e) => cb(e.payload)),
   replyError: (cb: (message: string) => void) => listen<string>("reply-error", (e) => cb(e.payload)),
+  replyStopped: (cb: () => void) => listen("reply-stopped", cb),
+  /** Jarvis asks before a risky action ("Move report.pdf to the Trash?"); "" once answered. */
+  confirm: (cb: (question: string) => void) => listen<string>("confirm", (e) => cb(e.payload)),
   downloadProgress: (cb: (p: { model: "speech" | "brain"; progress: number | null }) => void) =>
     listen<{ model: "speech" | "brain"; progress: number | null }>("download-progress", (e) => cb(e.payload)),
   downloadError: (cb: (message: string) => void) => listen<string>("download-error", (e) => cb(e.payload)),

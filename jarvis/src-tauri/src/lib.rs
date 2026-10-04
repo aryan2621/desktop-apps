@@ -3,6 +3,7 @@ macro_rules! mlog {
     ($($t:tt)*) => { $crate::config::log(&format!($($t)*)) };
 }
 
+mod actions;
 mod audio;
 mod brain;
 mod cleanup;
@@ -75,38 +76,117 @@ struct Vad {
     started: Instant,
     last_tick: Instant,
     last_voice: Instant,
-    /// Accumulated loud time; speech counts as started once it passes `MIN_SPEECH`.
+    /// Accumulated talking time; speech counts as started once it passes `MIN_SPEECH`.
     voice: Duration,
+    /// How long the level has been over the threshold without a break.
+    loud_run: Duration,
     heard_speech: bool,
+    /// When speech first began, for the log.
+    first_voice: Option<Instant>,
     /// Recent levels; the quietest of them is the room's background noise (a fan, AC or
     /// traffic sets it, while the gaps between words don't fool it).
     recent: std::collections::VecDeque<(Instant, f32)>,
+    /// The threshold that started speech, measured on the room before you spoke. Kept from then
+    /// on, so talking can't move it.
+    start_threshold: f32,
     /// Typical level of your voice (average of loud moments); 0 until you speak.
     speech_level: f32,
-    /// Loudest level heard, for the log.
+    /// Loudest level heard, and the last threshold used, for the log.
     peak: f32,
+    threshold: f32,
+    /// Short sounds ignored because they didn't last (clicks, breaths), for the log.
+    blips: u32,
     /// A decision (send / give up) has been made for this recording.
     decided: bool,
 }
 
 impl Vad {
     fn new() -> Self {
+        Self::after(None)
+    }
+
+    /// Starts listening again, remembering the room's background from last time, so speaking
+    /// the moment the mic opens isn't mistaken for the background.
+    fn after(previous: Option<&Vad>) -> Self {
         let now = Instant::now();
+        let mut recent = std::collections::VecDeque::new();
+        if let Some(floor) = previous.map(Vad::noise_floor).filter(|f| *f < 1.0) {
+            recent.push_back((now, floor));
+        }
         Self {
             started: now,
             last_tick: now,
             last_voice: now,
             voice: Duration::ZERO,
+            loud_run: Duration::ZERO,
             heard_speech: false,
-            recent: std::collections::VecDeque::new(),
+            first_voice: None,
+            recent,
+            start_threshold: 0.0,
             speech_level: 0.0,
             peak: 0.0,
+            threshold: 0.0,
+            blips: 0,
             decided: false,
         }
     }
 
     fn noise_floor(&self) -> f32 {
         self.recent.iter().map(|&(_, l)| l).fold(f32::MAX, f32::min).min(1.0)
+    }
+
+    /// Takes the next mic level and decides whether you've finished speaking. `sensitivity`
+    /// is the Mic sensitivity setting (lower = picks up quieter voices).
+    fn step(&mut self, now: Instant, level: f32, sensitivity: f32, pause: Duration, timeout: Duration) -> VadDecision {
+        let dt = now - self.last_tick;
+        self.last_tick = now;
+        self.peak = self.peak.max(level);
+        let threshold = if !self.heard_speech {
+            // Before you speak: learn the room, and call it speech once it's clearly louder than
+            // the room (judged against the room itself, so a quiet voice in a quiet room counts
+            // and a fan doesn't).
+            self.recent.push_back((now, level));
+            while self.recent.front().is_some_and(|&(t, _)| now - t > NOISE_WINDOW) {
+                self.recent.pop_front();
+            }
+            let scale = sensitivity / NORMAL_SENSITIVITY;
+            (self.noise_floor() * SPEECH_OVER_NOISE * scale).max(MIN_SPEECH_LEVEL * scale)
+        } else {
+            // While you speak: only your voice keeps it open. Never lower than what started
+            // speech, and at least a fair part of your speaking level, so room noise, typing
+            // and breathing between sentences count as the pause they are.
+            self.start_threshold.max(self.speech_level * VOICE_SHARE)
+        };
+        self.threshold = threshold;
+        if level > threshold {
+            self.loud_run += dt;
+        } else {
+            if self.loud_run > Duration::ZERO && self.loud_run < SUSTAIN {
+                self.blips += 1;
+            }
+            self.loud_run = Duration::ZERO;
+            if !self.heard_speech {
+                // Isolated sounds fade instead of adding up to "speech".
+                self.voice = self.voice.saturating_sub(dt / 2);
+            }
+        }
+        if self.loud_run >= SUSTAIN {
+            self.speech_level = if self.speech_level == 0.0 { level } else { self.speech_level * 0.9 + level * 0.1 };
+            self.voice += dt;
+            self.last_voice = now;
+            if self.voice >= MIN_SPEECH && !self.heard_speech {
+                self.heard_speech = true;
+                self.start_threshold = threshold;
+                self.first_voice = Some(now - self.voice);
+            }
+        }
+        if self.heard_speech && (now - self.last_voice >= pause || now - self.started >= MAX_UTTERANCE) {
+            VadDecision::Send
+        } else if !self.heard_speech && now - self.started >= timeout {
+            VadDecision::GiveUp
+        } else {
+            VadDecision::Continue
+        }
     }
 }
 
@@ -119,14 +199,26 @@ enum VadDecision {
     GiveUp,
 }
 
+/// Once you're speaking, sound only counts as more speech if it reaches this share of your
+/// speaking level.
+const VOICE_SHARE: f32 = 0.35;
 /// Loud time needed before a recording counts as speech (filters out clicks and coughs).
 const MIN_SPEECH: Duration = Duration::from_millis(250);
 /// Longest single utterance in conversation mode before it is sent anyway.
 const MAX_UTTERANCE: Duration = Duration::from_secs(45);
 /// How far back the background-noise estimate looks.
 const NOISE_WINDOW: Duration = Duration::from_secs(3);
-/// Speech must be this many times louder than the background.
+/// Speech must be this many times louder than the background (at "Normal" mic sensitivity).
 const SPEECH_OVER_NOISE: f32 = 2.5;
+/// In a near-silent room, speech still has to reach this level (at "Normal" sensitivity).
+const MIN_SPEECH_LEVEL: f32 = 0.005;
+/// The "Normal" mic sensitivity setting; others scale the thresholds from it.
+const NORMAL_SENSITIVITY: f32 = 0.012;
+/// Only sound that lasts this long counts as talking: clicks, taps and breaths are shorter, and
+/// must neither start an utterance nor keep one open.
+const SUSTAIN: Duration = Duration::from_millis(100);
+/// No audio from the mic for this long while listening: it has stopped, so stop waiting.
+const MIC_SILENT: Duration = Duration::from_secs(2);
 /// Pause after Jarvis stops speaking before the mic reopens, so it doesn't hear its own echo.
 const ECHO_GUARD: Duration = Duration::from_millis(300);
 
@@ -158,6 +250,12 @@ struct Core {
     /// Same text as the menu bar status line, for the app window.
     status: Mutex<String>,
     last_warm_up: Mutex<Option<Instant>>,
+    /// Running timers: id, label, when it ends.
+    timers: Mutex<Vec<(u64, String, Instant)>>,
+    /// Ids for timers and the hidden windows pages are read in.
+    next_id: AtomicU64,
+    /// While Jarvis waits for a yes or no: where the widget's buttons send the answer.
+    pending_confirm: Mutex<Option<std::sync::mpsc::Sender<bool>>>,
 }
 
 impl Core {
@@ -209,6 +307,7 @@ impl Core {
         let mut phase = self.phase.lock().unwrap();
         self.turn.fetch_add(1, Ordering::SeqCst);
         self.speaker.stop();
+        let _ = self.app.emit_to("main", "reply-stopped", ());
         if *phase == Phase::Responding {
             *phase = Phase::Idle;
         }
@@ -365,7 +464,10 @@ impl Core {
     /// Opens the mic. In conversation mode the level meter also watches for the end of speech.
     fn start_recording(self: &Arc<Self>) -> bool {
         self.set_phase(Phase::Recording);
-        *self.vad.lock().unwrap() = Vad::new();
+        {
+            let mut vad = self.vad.lock().unwrap();
+            *vad = Vad::after(Some(&vad));
+        }
         let core = self.clone();
         let on_level = Box::new(move |level: f32| {
             let _ = core.app.emit_to("widget", "level", level);
@@ -403,11 +505,45 @@ impl Core {
     fn start_conversation(self: &Arc<Self>) {
         self.in_conversation.store(true, Ordering::SeqCst);
         // Count from now: the tap itself isn't speech.
-        *self.vad.lock().unwrap() = Vad::new();
+        {
+            let mut vad = self.vad.lock().unwrap();
+            *vad = Vad::after(Some(&vad));
+        }
         self.emit("listening", None, None);
         self.show_widget();
         self.play("Tink");
+        self.watch_mic();
         self.set_status(&format!("In conversation — tap {} to end", key_label(&self.cfg().hotkey)));
+    }
+
+    /// Conversation mode: if the mic stops delivering audio, nothing would ever decide the
+    /// utterance is over and it would sit on "Listening". Notice that and move on.
+    fn watch_mic(self: &Arc<Self>) {
+        let core = self.clone();
+        let turn = self.turn.load(Ordering::SeqCst);
+        std::thread::spawn(move || loop {
+            std::thread::sleep(Duration::from_millis(500));
+            if !core.conversing() || !core.current(turn) || core.phase() != Phase::Recording {
+                return;
+            }
+            let (decided, silent, heard) = {
+                let v = core.vad.lock().unwrap();
+                (v.decided, v.last_tick.elapsed() >= MIC_SILENT, v.heard_speech)
+            };
+            if decided {
+                return;
+            }
+            if silent {
+                core.vad.lock().unwrap().decided = true;
+                mlog!("vad: the mic stopped sending audio; {}", if heard { "sending what was said" } else { "ending the conversation" });
+                if heard {
+                    core.finish_recording();
+                } else {
+                    core.end_conversation("the mic stopped");
+                }
+                return;
+            }
+        });
     }
 
     /// Conversation mode: open the mic for the next thing the user says.
@@ -421,6 +557,7 @@ impl Core {
         if self.start_recording() {
             self.emit("listening", None, None);
             self.show_widget();
+            self.watch_mic();
         }
     }
 
@@ -449,57 +586,29 @@ impl Core {
             if v.decided {
                 return;
             }
-            let now = Instant::now();
-            let dt = now - v.last_tick;
-            v.last_tick = now;
-            v.recent.push_back((now, level));
-            while v.recent.front().is_some_and(|&(t, _)| now - t > NOISE_WINDOW) {
-                v.recent.pop_front();
-            }
-            v.peak = v.peak.max(level);
-            // Speech = clearly louder than the room. In a quiet room the configured threshold
-            // decides; with a fan or AC running, the measured background does.
-            // Capped at half your speaking level, so a long unbroken sentence can't raise the
-            // background estimate high enough to cut you off; but always clear of the noise's
-            // own peaks, or a loud room would never count as a pause.
-            let floor = v.noise_floor();
-            let mut over_noise = floor * SPEECH_OVER_NOISE;
-            if v.speech_level > 0.0 {
-                over_noise = over_noise.min(v.speech_level * 0.5).max(floor * 1.5);
-            }
-            let threshold = cfg.speech_threshold.max(over_noise);
-            if level > threshold {
-                v.speech_level = if v.speech_level == 0.0 { level } else { v.speech_level * 0.9 + level * 0.1 };
-                v.voice += dt;
-                v.last_voice = now;
-                if v.voice >= MIN_SPEECH {
-                    v.heard_speech = true;
-                }
-            } else if !v.heard_speech {
-                // Isolated blips fade instead of adding up to "speech".
-                v.voice = v.voice.saturating_sub(dt / 2);
-            }
             let pause = Duration::from_secs_f32(cfg.pause_seconds.max(0.4));
-            let long = now - v.started >= MAX_UTTERANCE;
-            let decision = if v.heard_speech && (now - v.last_voice >= pause || long) {
-                VadDecision::Send
-            } else if !v.heard_speech && now - v.started >= Duration::from_secs(cfg.conversation_timeout_seconds.max(3) as u64) {
-                VadDecision::GiveUp
-            } else {
-                VadDecision::Continue
-            };
+            let timeout = Duration::from_secs(cfg.conversation_timeout_seconds.max(3) as u64);
+            let now = Instant::now();
+            let decision = v.step(now, level, cfg.speech_threshold, pause, timeout);
             if !matches!(decision, VadDecision::Continue) {
                 v.decided = true;
+                let since = |t: Instant| (t - v.started).as_secs_f32();
                 mlog!(
-                    "vad: {} after {:.1}s — background {floor:.4}, threshold {threshold:.4}, voice {:.4}, loudest {:.4}",
+                    "vad: {} after {:.1}s (speech {:.1}s–{:.1}s, then {:.1}s quiet) — background {:.4}, threshold {:.4}, voice {:.4}, loudest {:.4}, {} short sounds ignored",
                     match decision {
-                        VadDecision::Send if long => "sent at the length limit",
+                        VadDecision::Send if now - v.started >= MAX_UTTERANCE => "sent at the length limit",
                         VadDecision::Send => "pause detected",
                         _ => "no speech",
                     },
-                    (now - v.started).as_secs_f32(),
+                    since(now),
+                    v.first_voice.map(since).unwrap_or_default(),
+                    since(v.last_voice),
+                    (now - v.last_voice).as_secs_f32(),
+                    v.noise_floor(),
+                    v.threshold,
                     v.speech_level,
-                    v.peak
+                    v.peak,
+                    v.blips
                 );
             }
             decision
@@ -586,16 +695,34 @@ impl Core {
         self.emit_reply(turn, "thinking", question, "");
         let messages = self.messages_for(&cfg, question);
         let mut reply = String::new();
-        let mut splitter = SentenceSplitter::default();
+        // Shared by the two callbacks below: text before an action is spoken when it starts.
+        let working = std::cell::Cell::new(false);
+        let splitter = std::cell::RefCell::new(SentenceSplitter::default());
+        // Sentences said so far: a closing offer ("Let me know if…") after the answer is dropped.
+        let said = std::cell::Cell::new(0usize);
+        let say = |sentence: &str| {
+            if said.get() > 0 && llm::is_offer(sentence) {
+                return;
+            }
+            said.set(said.get() + 1);
+            self.speaker.say(&llm::speakable(sentence));
+        };
+        let steps = std::cell::RefCell::new(Vec::<String>::new());
         let mut guard = llm::LoopGuard::default();
         let mut loop_start = None;
         let mut first_token_ms = None;
         let t1 = Instant::now();
-        let result = self.brain.chat(&messages, |piece| {
+        let host = self.app.state::<Arc<Core>>().inner().clone();
+        let result = actions::converse(&self.brain, &cfg, host.as_ref(), messages, || self.current(turn), |piece| {
             if !self.current(turn) {
                 return false;
             }
             first_token_ms.get_or_insert(t1.elapsed().as_millis());
+            if working.take() && !reply.is_empty() {
+                // Words said before an action and after it are separate sentences.
+                reply.push(' ');
+                guard.push(" ");
+            }
             reply.push_str(piece);
             // Checked before speaking, so the repeat that gives the loop away is never said.
             if let Some(start) = guard.push(piece) {
@@ -603,11 +730,29 @@ impl Core {
                 return false;
             }
             if cfg.speak_replies {
-                for sentence in splitter.push(piece) {
-                    self.speaker.say(&llm::speakable(&sentence));
+                for sentence in splitter.borrow_mut().push(piece) {
+                    say(&sentence);
                 }
             }
             self.emit_reply(turn, "speaking", question, reply.trim());
+            true
+        }, |what| {
+            if !self.current(turn) {
+                return false;
+            }
+            if cfg.speak_replies {
+                // Say what came before the action now, rather than after it's done.
+                if let Some(rest) = splitter.borrow_mut().finish() {
+                    say(&rest);
+                }
+            }
+            working.set(true);
+            // A task of several steps shows the last ones done, then the one under way.
+            let mut steps = steps.borrow_mut();
+            let shown: Vec<String> = steps.iter().rev().take(2).rev().map(|s: &String| format!("✓ {s}")).collect();
+            steps.push(what.to_string());
+            let line = if shown.is_empty() { format!("{what}…") } else { format!("{} · {what}…", shown.join(" · ")) };
+            self.emit_reply(turn, "thinking", question, &line);
             true
         });
         if let Some(start) = loop_start {
@@ -623,14 +768,24 @@ impl Core {
             reply = format!("{} {sorry}", reply.trim());
             self.emit_reply(turn, "speaking", question, reply.trim());
         } else if cfg.speak_replies && self.current(turn) {
-            if let Some(rest) = splitter.finish() {
-                self.speaker.say(&llm::speakable(&rest));
+            if let Some(rest) = splitter.borrow_mut().finish() {
+                say(&rest);
             }
         }
-        // Keep even a cut-off answer, so "what were you saying?" works.
+        let mut reply = llm::without_offers(&reply);
+        let (done, steps) = result.as_ref().map(|t| (t.done.clone(), t.steps.clone())).unwrap_or_default();
+        if reply.trim().is_empty() && !done.is_empty() && self.current(turn) {
+            // Acted, but said nothing about it.
+            reply = "I couldn't verify that the task was completed.".into();
+            if cfg.speak_replies {
+                self.speaker.say(&reply);
+            }
+            self.emit_reply(turn, "speaking", question, &reply);
+        }
+        // Interrupted workers must not append stale answers to a newer conversation.
         let total_ms = t1.elapsed().as_millis() as u64;
-        if !reply.trim().is_empty() {
-            self.remember(question, reply.trim());
+        if !reply.trim().is_empty() && self.current(turn) {
+            self.remember(turn, question, reply.trim(), steps);
             if cfg.save_history {
                 history::append(&history::Entry {
                     time: chrono::Local::now().to_rfc3339(),
@@ -642,6 +797,7 @@ impl Core {
                     first_word_ms: first_token_ms.unwrap_or_default() as u64,
                     total_ms,
                     model: self.brain.model_name(),
+                    actions: done,
                 });
                 let _ = self.app.emit_to("main", "history-updated", ());
             }
@@ -705,6 +861,7 @@ impl Core {
         if self.conversing() {
             self.end_conversation("ended from the app window");
         } else {
+            self.cancel_recording();
             self.interrupt();
             if let Some(w) = self.widget() {
                 hide_widget(&w);
@@ -720,25 +877,30 @@ impl Core {
             mlog!("starting a new conversation after {} quiet minutes", cfg.forget_after_minutes);
             conv.messages.clear();
         }
-        let keep = cfg.history_turns * 2;
-        let skip = conv.messages.len().saturating_sub(keep);
+        let skip = turns_start(&conv.messages, cfg.history_turns);
         let mut messages = vec![Message::system(system_prompt(cfg))];
         messages.extend(conv.messages[skip..].iter().cloned());
-        messages.push(Message::user(question));
+        messages.push(Message::user(with_time(question)));
         messages
     }
 
-    fn remember(&self, question: &str, reply: &str) {
+    /// Keeps the exchange for follow-ups, with the actions taken and what they found, so "open
+    /// that" knows what "that" is.
+    fn remember(&self, turn: u64, question: &str, reply: &str, steps: Vec<Message>) {
         let mut conv = self.conversation.lock().unwrap();
+        if !self.current(turn) {
+            return;
+        }
         conv.messages.push(Message::user(question));
+        conv.messages.extend(steps);
         conv.messages.push(Message::assistant(reply));
         conv.last_at = Some(Instant::now());
-        let keep = self.cfg().history_turns * 2;
-        let excess = conv.messages.len().saturating_sub(keep);
-        conv.messages.drain(..excess);
+        let start = turns_start(&conv.messages, self.cfg().history_turns);
+        conv.messages.drain(..start);
     }
 
-    fn new_conversation(&self) {
+    fn new_conversation(self: &Arc<Self>) {
+        self.stop_all();
         *self.conversation.lock().unwrap() = Conversation::default();
         mlog!("new conversation");
     }
@@ -756,7 +918,10 @@ impl Core {
         let core = self.clone();
         std::thread::spawn(move || {
             let started = Instant::now();
-            match core.brain.warm_up() {
+            let cfg = core.cfg();
+            // Some chat templates refuse a conversation without a question in it.
+            let prefix = [Message::system(system_prompt(&cfg)), Message::user("Hi")];
+            match core.brain.warm_up(&prefix) {
                 Ok(()) => mlog!("AI ready ({} ms)", started.elapsed().as_millis()),
                 Err(e) => {
                     mlog!("AI: {e}");
@@ -850,11 +1015,12 @@ impl Core {
             let core = self.clone();
             std::thread::spawn(move || core.load_model());
         }
-        if !model::brain_path(&dir).exists() && !downloading("brain") {
+        let brain_id = self.cfg().builtin_model;
+        if !model::brain_path(&dir, &brain_id).exists() && !downloading("brain") {
             self.download_progress("brain", Some(0.0));
             let core = self.clone();
             std::thread::spawn(move || {
-                let result = model::ensure_brain(&config::data_dir(), |done, total| {
+                let result = model::ensure_brain(&config::data_dir(), &brain_id, |done, total| {
                     core.download_progress("brain", Some(if total > 0 { done as f32 / total as f32 } else { 0.0 }));
                 });
                 core.download_progress("brain", None);
@@ -907,26 +1073,215 @@ impl Core {
     }
 }
 
+/// Timers, and the hidden browser pages are read in, for `actions`.
+impl Core {
+    /// Listens (with the open mic, no key needed) for a yes or no, while also taking the
+    /// widget's buttons. Gives up after a few quiet seconds.
+    fn hear_yes_no(&self, turn: u64, buttons: &std::sync::mpsc::Receiver<bool>) -> bool {
+        std::thread::sleep(ECHO_GUARD);
+        let cfg = self.cfg();
+        let (said_tx, said_rx) = std::sync::mpsc::channel::<bool>();
+        let vad = Arc::new(Mutex::new(Vad::new()));
+        let app = self.app.clone();
+        let sensitivity = cfg.speech_threshold;
+        let level_vad = vad.clone();
+        let said_tx = Mutex::new(Some(said_tx));
+        let on_level = Box::new(move |level: f32| {
+            let _ = app.emit_to("widget", "level", level);
+            let decision = level_vad.lock().unwrap().step(Instant::now(), level, sensitivity, Duration::from_millis(900), Duration::from_secs(8));
+            let heard = match decision {
+                VadDecision::Continue => return,
+                VadDecision::Send => true,
+                VadDecision::GiveUp => false,
+            };
+            if let Some(tx) = said_tx.lock().unwrap().take() {
+                let _ = tx.send(heard);
+            }
+        });
+        let listening = self.recorder.start(cfg.input_device.clone(), on_level).is_ok();
+        let started = Instant::now();
+        let heard = loop {
+            if let Ok(yes) = buttons.try_recv() {
+                if listening {
+                    let _ = self.recorder.stop();
+                }
+                return yes;
+            }
+            if !self.current(turn) || started.elapsed() > Duration::from_secs(15) {
+                if listening {
+                    let _ = self.recorder.stop();
+                }
+                return false;
+            }
+            if let Ok(heard) = said_rx.try_recv() {
+                break heard;
+            }
+            std::thread::sleep(Duration::from_millis(50));
+        };
+        if !listening {
+            return false;
+        }
+        let Ok(rec) = self.recorder.stop() else { return false };
+        if !heard {
+            return false;
+        }
+        self.emit("transcribing", None, None);
+        let Ok(transcriber) = self.ensure_transcriber() else { return false };
+        let said = transcriber.transcribe(&rec.samples, &cfg.language, false, &[]).map(|t| cleanup::clean(&t, true)).unwrap_or_default();
+        mlog!("heard for the confirmation: {said}");
+        self.current(turn) && is_yes(&said)
+    }
+}
+
+/// "Yes", "yeah, do it", "go ahead", "sure"… but not "no" or "yes, wait, no".
+fn is_yes(said: &str) -> bool {
+    static YES: std::sync::LazyLock<regex::Regex> = std::sync::LazyLock::new(|| {
+        regex::Regex::new(r"(?i)\b(yes|yeah|yep|yup|sure|ok|okay|go ahead|do it|confirm|please do|correct|absolutely|of course|affirmative)\b").unwrap()
+    });
+    static NO: std::sync::LazyLock<regex::Regex> = std::sync::LazyLock::new(|| {
+        regex::Regex::new(r"(?i)\b(no|nope|don'?t|do not|stop|cancel|wait|never mind|nevermind)\b").unwrap()
+    });
+    YES.is_match(said) && !NO.is_match(said)
+}
+
+impl actions::Host for Core {
+    fn start_timer(&self, seconds: u64, label: String) {
+        let id = self.next_id.fetch_add(1, Ordering::SeqCst);
+        let ends = Instant::now() + Duration::from_secs(seconds);
+        self.timers.lock().unwrap().push((id, label.clone(), ends));
+        let core = self.app.state::<Arc<Core>>().inner().clone();
+        std::thread::spawn(move || {
+            std::thread::sleep(Duration::from_secs(seconds));
+            let mut timers = core.timers.lock().unwrap();
+            let Some(i) = timers.iter().position(|t| t.0 == id) else { return }; // cancelled
+            timers.remove(i);
+            drop(timers);
+            core.timer_done(&label);
+        });
+    }
+
+    fn timers(&self) -> Vec<(String, u64)> {
+        let now = Instant::now();
+        self.timers.lock().unwrap().iter().map(|(_, label, ends)| (label.clone(), ends.saturating_duration_since(now).as_secs())).collect()
+    }
+
+    fn cancel_timers(&self) -> usize {
+        std::mem::take(&mut *self.timers.lock().unwrap()).len()
+    }
+
+    /// Says the question, shows Yes / No in the widget, and listens once for the answer. Silence,
+    /// "no", a stop (Esc or the hotkey) or anything unclear counts as no.
+    fn confirm(&self, question: &str) -> bool {
+        let turn = self.turn.load(Ordering::SeqCst);
+        let cfg = self.cfg();
+        let (tx, rx) = std::sync::mpsc::channel::<bool>();
+        *self.pending_confirm.lock().unwrap() = Some(tx);
+        let payload = WidgetState { state: "confirm", message: Some(question.to_string()), progress: None, question: None, reply: None };
+        let _ = self.app.emit_to("widget", "widget-state", &payload);
+        let _ = self.app.emit_to("main", "confirm", question);
+        self.show_widget();
+        mlog!("asking: {question}");
+        if cfg.speak_replies {
+            self.speaker.say(question);
+            self.speaker.wait(|| self.current(turn));
+        }
+        let answer = self.hear_yes_no(turn, &rx);
+        *self.pending_confirm.lock().unwrap() = None;
+        mlog!("answer: {}", if answer { "yes" } else { "no" });
+        let _ = self.app.emit_to("main", "confirm", "");
+        answer
+    }
+
+    /// Opens the page in a hidden window (Safari's engine, built into macOS) so its JavaScript
+    /// runs, then reads its text. The page hands the text back by navigating to a made-up
+    /// address, which is caught and cancelled here; the window never gets Jarvis's own APIs.
+    fn render_page(&self, url: &str) -> anyhow::Result<String> {
+        const SCRIPT: &str = r#"
+            if (window.top === window) {
+              const send = () => {
+                const text = (document.body && document.body.innerText) || "";
+                location.href = "https://jarvis.invalid/#" + encodeURIComponent(document.title + "\n" + text.slice(0, 30000));
+              };
+              addEventListener("load", () => setTimeout(send, 1500));
+            }
+        "#;
+        let (tx, rx) = std::sync::mpsc::channel::<String>();
+        let tx = Mutex::new(Some(tx));
+        let label = format!("page-{}", self.next_id.fetch_add(1, Ordering::SeqCst));
+        let window = WebviewWindowBuilder::new(&self.app, &label, WebviewUrl::External(url.parse()?))
+            .visible(false)
+            .focused(false)
+            .user_agent(actions::USER_AGENT)
+            .initialization_script(SCRIPT)
+            .on_navigation(move |to| {
+                if to.host_str() != Some("jarvis.invalid") {
+                    return true;
+                }
+                if let Some(tx) = tx.lock().unwrap().take() {
+                    let _ = tx.send(actions::percent_decode(to.fragment().unwrap_or_default()));
+                }
+                false
+            })
+            .build()?;
+        let text = rx.recv_timeout(Duration::from_secs(20));
+        let _ = window.destroy();
+        text.map_err(|_| anyhow::anyhow!("The page didn't finish loading"))
+    }
+}
+
+impl Core {
+    /// A timer ran out: say so even when spoken answers are off, and post a notification.
+    fn timer_done(self: &Arc<Self>, label: &str) {
+        let text = if label.is_empty() { "Your timer is done.".to_string() } else { format!("Your {label} timer is done.") };
+        mlog!("timer done: {label}");
+        play_sound("Glass");
+        let _ = std::process::Command::new("osascript")
+            .args(["-e", "on run argv\ndisplay notification (item 1 of argv) with title \"Jarvis\" sound name \"Glass\"\nend run", &text])
+            .status();
+        if self.phase() == Phase::Idle {
+            let turn = self.turn.load(Ordering::SeqCst);
+            self.show_widget();
+            self.emit_reply(turn, "done", "Timer", &text);
+            self.speaker.say(&text);
+            self.hide_widget_later(Duration::from_secs(6));
+        }
+    }
+}
+
 fn system_prompt(cfg: &Config) -> String {
-    let now = chrono::Local::now().format("%A, %-d %B %Y, %-I:%M %p");
     let base = cfg.system_prompt.clone().unwrap_or_else(|| {
         format!(
-            "You are {name}, a helpful voice assistant running privately on the user's Mac. \
+            "You are {name}, a helpful voice assistant running on the user's Mac. \
              Everything you write is read aloud by a text-to-speech voice, so answer the way a \
              person would speak: usually one to three short sentences, more only when the user \
              asks for detail or steps. Never use markdown, bullet points, headings, code blocks, \
              tables, emojis or links. Write numbers, times and units the way you would say them. \
+             Don't end with offers or questions like \"Would you like me to…\" or \"Let me know if…\"; \
+             just stop once you've answered. \
              The user's words come from speech recognition and may contain mistakes, so work out \
-             what they most likely meant. You have no internet access: if a question needs live \
-             information such as news, weather or prices, say so briefly instead of guessing. \
-             You can only talk for now: you cannot open apps, control the computer, set reminders \
-             or send messages, so never offer to. If you don't know something, or are unsure of a \
+             what they most likely meant. If you don't know something, or are unsure of a \
              word in a language you don't know well, say so in one short sentence; never guess, \
              and never correct yourself over and over.",
             name = cfg.assistant_name
         )
     });
-    format!("{base}\n\nCurrent date and time: {now}.")
+    // No clock here: this part and the tool list stay the same from question to question, so
+    // the AI can keep them read in advance. The time goes with each question instead.
+    format!("{base}\n\n{}", actions::instructions(cfg))
+}
+
+/// Where the last `turns` exchanges begin, so a question is never kept without its actions
+/// and answer.
+fn turns_start(messages: &[Message], turns: usize) -> usize {
+    let questions: Vec<usize> = messages.iter().enumerate().filter(|(_, m)| m.role == "user").map(|(i, _)| i).collect();
+    questions.len().checked_sub(turns).and_then(|skip| questions.get(skip)).copied().unwrap_or(if turns == 0 { messages.len() } else { 0 })
+}
+
+/// The question with the current date and time, which the AI needs for "tomorrow", "in an hour"
+/// and reminders.
+fn with_time(question: &str) -> String {
+    let now = chrono::Local::now().format("%A, %-d %B %Y, %-I:%M %p (%Y-%m-%d %H:%M)");
+    format!("{question}\n\n[It is now {now}.]")
 }
 
 fn key_label(key: &str) -> &str {
@@ -1166,11 +1521,16 @@ pub fn run() {
             commands::open_privacy,
             commands::open_voice_settings,
             commands::open_data_folder,
+            commands::confirm_answer,
         ])
         .setup(|app| {
             app.set_activation_policy(tauri::ActivationPolicy::Accessory);
             let first_run = !config::config_path().exists();
-            let cfg = config::load();
+            let mut cfg = config::load();
+            // Debug aid: answers aren't spoken (not saved to the settings file).
+            if std::env::var_os("JARVIS_QUIET").is_some() {
+                cfg.speak_replies = false;
+            }
 
             use tauri_plugin_autostart::ManagerExt;
             let status = MenuItem::with_id(app, "status", "Starting…", false, None::<&str>)?;
@@ -1247,6 +1607,9 @@ pub fn run() {
                 status_item: status,
                 status: Mutex::new("Starting…".into()),
                 last_warm_up: Mutex::new(None),
+                timers: Mutex::new(Vec::new()),
+                next_id: AtomicU64::new(1),
+                pending_confirm: Mutex::new(None),
             });
 
             let trusted = permission::has_accessibility(true);
@@ -1270,6 +1633,13 @@ pub fn run() {
                 c.load_model();
                 // Load the LLM too, so the first question doesn't wait for it.
                 c.warm_up_llm();
+                // Debug aid: `JARVIS_ASK="set a 1 minute timer" Jarvis` asks as if typed.
+                if let Ok(question) = std::env::var("JARVIS_ASK") {
+                    std::thread::sleep(Duration::from_secs(1));
+                    if let Err(e) = c.ask_typed(&question) {
+                        mlog!("JARVIS_ASK: {e}");
+                    }
+                }
             });
             let c = core.clone();
             std::thread::spawn(move || c.start_hotkey());
@@ -1304,32 +1674,78 @@ pub fn run() {
     });
 }
 
-/// Headless check of the brain and voice: `jarvis --ask "what's a good name for a cat?"`.
+/// Headless check of the brain, actions and voice: `jarvis --ask "what's the weather in Pune?"`.
 pub fn cli_ask(question: &str) -> anyhow::Result<()> {
     use std::io::Write;
+    /// Timers and hidden pages need the running app; from the command line they're stand-ins.
+    struct Cli;
+    impl actions::Host for Cli {
+        fn start_timer(&self, seconds: u64, label: String) {
+            eprintln!("(would start a {seconds}-second timer: {label})");
+        }
+        fn timers(&self) -> Vec<(String, u64)> {
+            vec![]
+        }
+        fn cancel_timers(&self) -> usize {
+            0
+        }
+        fn render_page(&self, _url: &str) -> anyhow::Result<String> {
+            Err(anyhow::anyhow!("no hidden browser from the command line"))
+        }
+        fn confirm(&self, question: &str) -> bool {
+            if std::env::var_os("JARVIS_YES").is_some() {
+                eprintln!("({question} → yes, JARVIS_YES is set)");
+                return true;
+            }
+            eprint!("{question} [y/N] ");
+            let mut line = String::new();
+            let _ = std::io::stdin().read_line(&mut line);
+            line.trim().eq_ignore_ascii_case("y") || line.trim().eq_ignore_ascii_case("yes")
+        }
+    }
     let cfg = config::load();
     let brain = Brain::new(&cfg);
     let speaker = Speaker::new(&cfg.voice, cfg.speech_rate);
-    let messages = vec![Message::system(system_prompt(&cfg)), Message::user(question)];
-    let mut splitter = SentenceSplitter::default();
+    let messages = vec![Message::system(system_prompt(&cfg)), Message::user(with_time(question))];
+    let splitter = std::cell::RefCell::new(SentenceSplitter::default());
     let started = Instant::now();
     let mut first = None;
-    brain.chat(&messages, |piece| {
-        first.get_or_insert(started.elapsed().as_millis());
-        print!("{piece}");
-        let _ = std::io::stdout().flush();
-        if cfg.speak_replies {
-            for s in splitter.push(piece) {
-                speaker.say(&llm::speakable(&s));
+    let speak = cfg.speak_replies && std::env::var_os("JARVIS_QUIET").is_none();
+    let done = actions::converse(
+        &brain,
+        &cfg,
+        &Cli,
+        messages,
+        || true,
+        |piece| {
+            first.get_or_insert(started.elapsed().as_millis());
+            print!("{piece}");
+            let _ = std::io::stdout().flush();
+            if speak {
+                for s in splitter.borrow_mut().push(piece) {
+                    speaker.say(&llm::speakable(&s));
+                }
             }
+            true
+        },
+        |what| {
+            eprintln!("[{what}…] ({} ms)", started.elapsed().as_millis());
+            true
+        },
+    )?;
+    if let Some(rest) = splitter.borrow_mut().finish() {
+        if speak {
+            speaker.say(&llm::speakable(&rest));
         }
-        true
-    })?;
-    if let Some(rest) = splitter.finish() {
-        speaker.say(&llm::speakable(&rest));
     }
     println!();
-    eprintln!("model: {}  first words: {} ms  full reply: {} ms", brain.model_name(), first.unwrap_or_default(), started.elapsed().as_millis());
+    eprintln!(
+        "model: {}  actions: {}  first words: {} ms  full reply: {} ms",
+        brain.model_name(),
+        done.done.len(),
+        first.unwrap_or_default(),
+        started.elapsed().as_millis()
+    );
     speaker.wait(|| true);
     brain.local.stop();
     Ok(())

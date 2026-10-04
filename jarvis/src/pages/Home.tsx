@@ -24,6 +24,7 @@ const spark: ChartConfig = { value: { label: "Questions", color: "var(--chart-1)
 export default function Home({ app, goTo }: { app: ReturnType<typeof useAppState>; goTo: (t: Tab) => void }) {
   const { entries } = useHistory("", 100_000);
   const [live, setLive] = useState<Reply | null>(null);
+  const [asking, setAsking] = useState("");
   const [draft, setDraft] = useState("");
   const replyRef = useRef<HTMLDivElement>(null);
   const s = app.state;
@@ -41,12 +42,19 @@ export default function Home({ app, goTo }: { app: ReturnType<typeof useAppState
   // Answers stream in here whether they were spoken, held or typed.
   useEffect(() => {
     const un = events.reply((r) => setLive(r));
+    const unAsk = events.confirm(setAsking);
+    const unStop = events.replyStopped(() => {
+      setLive((reply) => reply ? { ...reply, state: "done" } : reply);
+      setAsking("");
+    });
     const unErr = events.replyError((m) => {
       toast.error(m);
       setLive(null);
     });
     return () => {
       un.then((u) => u());
+      unAsk.then((u) => u());
+      unStop.then((u) => u());
       unErr.then((u) => u());
     };
   }, []);
@@ -66,6 +74,7 @@ export default function Home({ app, goTo }: { app: ReturnType<typeof useAppState
       await api.ask(q);
     } catch (e) {
       toast.error(String(e));
+      setDraft((current) => current || q);
       setLive(null);
     }
   }
@@ -204,8 +213,15 @@ export default function Home({ app, goTo }: { app: ReturnType<typeof useAppState
           <div className="border-b px-5 py-4">
             <p data-selectable className="text-[13px] text-muted-foreground">“{live.question}”</p>
             <div ref={replyRef} data-selectable className="mt-1.5 max-h-56 overflow-y-auto text-[15px] leading-relaxed whitespace-pre-wrap">
-              {live.state === "thinking" ? <span className="animate-pulse text-muted-foreground">Thinking…</span> : live.reply}
+              {live.state === "thinking" ? <span className="animate-pulse text-muted-foreground">{live.reply || "Thinking…"}</span> : live.reply}
             </div>
+            {asking && (
+              <div className="mt-3 flex items-center gap-2">
+                <span className="mr-auto text-[14px] font-medium">{asking}</span>
+                <Button size="sm" onClick={() => { setAsking(""); api.confirm(true); }}>Yes</Button>
+                <Button size="sm" variant="outline" onClick={() => { setAsking(""); api.confirm(false); }}>No</Button>
+              </div>
+            )}
           </div>
         )}
         <div className="flex items-end gap-2 px-3 py-3">

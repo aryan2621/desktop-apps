@@ -3,7 +3,11 @@
 
 use serde::{Deserialize, Serialize};
 use std::io::Write;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
+use std::sync::Mutex;
+
+// Serialise append and read/modify/replace so deleting an entry cannot lose a new answer.
+static STORE: Mutex<()> = Mutex::new(());
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Entry {
@@ -27,6 +31,9 @@ pub struct Entry {
     pub total_ms: u64,
     #[serde(default)]
     pub model: String,
+    /// What was done to answer: "Opening Slack", "Searching the web for …".
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub actions: Vec<String>,
 }
 
 pub fn path() -> PathBuf {
@@ -34,6 +41,7 @@ pub fn path() -> PathBuf {
 }
 
 pub fn append(entry: &Entry) {
+    let _guard = STORE.lock().unwrap();
     let Ok(line) = serde_json::to_string(entry) else { return };
     if let Ok(mut f) = std::fs::OpenOptions::new().create(true).append(true).open(path()) {
         let _ = writeln!(f, "{line}");
@@ -42,17 +50,30 @@ pub fn append(entry: &Entry) {
 
 /// All entries, oldest first. Unreadable lines are skipped.
 pub fn load() -> Vec<Entry> {
-    let Ok(content) = std::fs::read_to_string(path()) else { return vec![] };
-    content.lines().filter_map(|l| serde_json::from_str(l).ok()).collect()
+    let _guard = STORE.lock().unwrap();
+    read_entries(&path()).unwrap_or_default()
 }
 
-fn write_all(entries: &[Entry]) -> anyhow::Result<()> {
+fn read_entries(path: &Path) -> anyhow::Result<Vec<Entry>> {
+    let content = match std::fs::read_to_string(path) {
+        Ok(content) => content,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(vec![]),
+        Err(e) => return Err(e.into()),
+    };
+    Ok(content.lines().filter_map(|l| serde_json::from_str(l).ok()).collect())
+}
+
+fn write_all(path: &Path, entries: &[Entry]) -> anyhow::Result<()> {
     let mut out = String::new();
     for e in entries {
         out.push_str(&serde_json::to_string(e)?);
         out.push('\n');
     }
-    std::fs::write(path(), out)?;
+    let pending = path.with_extension("jsonl.tmp");
+    let mut file = std::fs::File::create(&pending)?;
+    file.write_all(out.as_bytes())?;
+    file.sync_all()?;
+    std::fs::rename(pending, path)?;
     Ok(())
 }
 
@@ -68,10 +89,34 @@ pub fn search(query: &str, limit: usize) -> Vec<Entry> {
 }
 
 pub fn delete(time: &str) -> anyhow::Result<()> {
-    let entries: Vec<Entry> = load().into_iter().filter(|e| e.time != time).collect();
-    write_all(&entries)
+    let _guard = STORE.lock().unwrap();
+    let path = path();
+    let entries: Vec<Entry> = read_entries(&path)?.into_iter().filter(|e| e.time != time).collect();
+    write_all(&path, &entries)
 }
 
 pub fn clear() -> anyhow::Result<()> {
-    write_all(&[])
+    let _guard = STORE.lock().unwrap();
+    write_all(&path(), &[])
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn replacement_preserves_valid_entries_and_leaves_no_partial_file() {
+        let dir = std::env::temp_dir().join(format!("jarvis-history-test-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("history.jsonl");
+        let entry: Entry = serde_json::from_value(serde_json::json!({"time": "test", "question": "hello", "answer": "hi"})).unwrap();
+        write_all(&path, &[entry]).unwrap();
+        assert_eq!(read_entries(&path).unwrap()[0].answer, "hi");
+        assert!(!path.with_extension("jsonl.tmp").exists());
+        write_all(&path, &[]).unwrap();
+        assert!(read_entries(&path).unwrap().is_empty());
+        assert!(read_entries(&dir).is_err());
+        std::fs::remove_file(path).unwrap();
+        std::fs::remove_dir(dir).unwrap();
+    }
 }

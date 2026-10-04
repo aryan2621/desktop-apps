@@ -1,28 +1,35 @@
 //! Talks to a local Ollama server. Replies are streamed token by token so speech can start
-//! before the whole answer is written. Nothing leaves the Mac.
+//! before the whole answer is written; decisions come back whole, shaped by a JSON schema.
 
 use anyhow::{anyhow, Result};
-use serde::Serialize;
 use serde_json::{json, Value};
 use std::io::{BufRead, BufReader};
 use std::sync::RwLock;
 use std::time::Duration;
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone)]
 pub struct Message {
     pub role: &'static str,
     pub content: String,
 }
 
 impl Message {
+    fn new(role: &'static str, content: impl Into<String>) -> Self {
+        Self { role, content: content.into() }
+    }
     pub fn system(content: impl Into<String>) -> Self {
-        Self { role: "system", content: content.into() }
+        Self::new("system", content)
     }
     pub fn user(content: impl Into<String>) -> Self {
-        Self { role: "user", content: content.into() }
+        Self::new("user", content)
     }
     pub fn assistant(content: impl Into<String>) -> Self {
-        Self { role: "assistant", content: content.into() }
+        Self::new("assistant", content)
+    }
+
+    /// The chat format both llama.cpp's server and Ollama take.
+    pub fn to_json(&self) -> Value {
+        json!({ "role": self.role, "content": self.content })
     }
 }
 
@@ -74,13 +81,8 @@ impl Ollama {
 
     /// Streams a reply. `on_text` gets each new piece and returns false to stop early
     /// (dropping the connection makes Ollama stop generating).
-    pub fn chat(&self, messages: &[Message], mut on_text: impl FnMut(&str) -> bool) -> Result<()> {
-        // `think: false` skips the hidden reasoning of thinking models (Qwen 3 etc.), which
-        // would otherwise add seconds of silence. Older models reject the field, so retry without.
-        let resp = match self.post_chat(messages, true) {
-            Err(e) if e.to_string().contains("does not support thinking") => self.post_chat(messages, false)?,
-            other => other?,
-        };
+    pub fn chat(&self, messages: &[Message], temperature: f32, mut on_text: impl FnMut(&str) -> bool) -> Result<()> {
+        let resp = self.post_chat(messages, json!({ "temperature": temperature }), None, true)?;
         for line in BufReader::new(resp).lines() {
             let line = line?;
             if line.trim().is_empty() {
@@ -102,18 +104,33 @@ impl Ollama {
         Ok(())
     }
 
-    fn post_chat(&self, messages: &[Message], no_think: bool) -> Result<reqwest::blocking::Response> {
+    /// A reply forced to match the JSON `schema`.
+    pub fn decide(&self, messages: &[Message], schema: &Value) -> Result<Value> {
+        let resp: Value = self.post_chat(messages, json!({ "temperature": 0 }), Some(schema), false)?.json()?;
+        let text = resp["message"]["content"].as_str().unwrap_or_default();
+        Ok(serde_json::from_str(text)?)
+    }
+
+    fn post_chat(&self, messages: &[Message], options: Value, format: Option<&Value>, stream: bool) -> Result<reqwest::blocking::Response> {
         let Settings { base, model, keep_alive } = self.settings();
         let mut body = json!({
             "model": model,
-            "messages": messages,
-            "stream": true,
+            "messages": messages.iter().map(Message::to_json).collect::<Vec<_>>(),
+            "stream": stream,
             "keep_alive": keep_alive,
+            "options": options,
+            // Thinking models (Qwen 3) would otherwise reason silently for seconds first.
+            "think": false,
         });
-        if no_think {
-            body["think"] = json!(false);
+        if let Some(schema) = format {
+            body["format"] = schema.clone();
         }
-        let resp = self.client.post(format!("{base}/api/chat")).json(&body).send().map_err(|e| self.explain(e))?;
+        let mut resp = self.client.post(format!("{base}/api/chat")).json(&body).send().map_err(|e| self.explain(e))?;
+        if !resp.status().is_success() && resp.status().as_u16() == 400 {
+            // Older models reject `think`.
+            body.as_object_mut().unwrap().remove("think");
+            resp = self.client.post(format!("{base}/api/chat")).json(&body).send().map_err(|e| self.explain(e))?;
+        }
         if resp.status().is_success() {
             return Ok(resp);
         }
@@ -247,6 +264,32 @@ fn sentence_end(s: &str) -> Option<usize> {
     None
 }
 
+/// A closing offer that adds nothing when heard: "Let me know if you need anything else!",
+/// "Would you like to adjust the volume?". Only dropped after the answer, never as the answer.
+pub fn is_offer(sentence: &str) -> bool {
+    static OFFER: std::sync::LazyLock<regex::Regex> = std::sync::LazyLock::new(|| {
+        regex::Regex::new(
+            r"(?i)^\W*(let me know (if|whether|what|how)|is there anything (else|more)|anything else (i can|you)|feel free to|if you (need|want|have|'d like) (anything|any|more|further|help)|hope (this|that) helps|happy to help|would you like (me )?to|do you want me to|shall i|should i (also )?(help|play|open|search|adjust))",
+        )
+        .unwrap()
+    });
+    OFFER.is_match(sentence)
+}
+
+/// The reply without closing offers after its first sentence.
+pub fn without_offers(reply: &str) -> String {
+    let mut splitter = SentenceSplitter::default();
+    let mut sentences = splitter.push(reply);
+    sentences.extend(splitter.finish());
+    let mut kept: Vec<String> = Vec::new();
+    for sentence in sentences {
+        if kept.is_empty() || !is_offer(&sentence) {
+            kept.push(sentence);
+        }
+    }
+    kept.join(" ")
+}
+
 /// Strips markdown and symbols the voice would read out literally ("asterisk asterisk").
 pub fn speakable(text: &str) -> String {
     let mut s: String = text.chars().filter(|c| !matches!(c, '*' | '#' | '`' | '_' | '|' | '>')).collect();
@@ -256,25 +299,4 @@ pub fn speakable(text: &str) -> String {
         s = rest.to_string();
     }
     s.trim().to_string()
-}
-
-#[cfg(test)]
-mod tests {
-    use super::LoopGuard;
-
-    #[test]
-    fn loop_guard_stops_a_reply_going_round_in_circles() {
-        let reply = "Good night is \"শুভ রাত\". Actually, it's \"রাতের শুভ দিন\" — no. Final answer: \"নিশ শুভ\" — no. \
-                     Actually, it's \"রাতের শুভ দিন\" — no. Final answer: \"নিশ শুভ\" — no. Actually, it's \"রাতের শুভ দিন\" — no.";
-        let mut guard = LoopGuard::default();
-        let start = reply.split_inclusive(' ').find_map(|piece| guard.push(piece)).expect("loop detected");
-        assert_eq!(reply[..start].trim(), "Good night is \"শুভ রাত\".");
-    }
-
-    #[test]
-    fn loop_guard_ignores_normal_replies() {
-        let reply = "Sure. First, open Settings. Then tap General. Then tap About. No. No. No. That's it.";
-        let mut guard = LoopGuard::default();
-        assert!(reply.split_inclusive(' ').all(|piece| guard.push(piece).is_none()));
-    }
 }

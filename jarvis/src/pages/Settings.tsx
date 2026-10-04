@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
-import { AudioLines, Brain, FolderOpen, Info, Keyboard, MessagesSquare, Mic, Play, RefreshCw, ShieldCheck, Sparkles, Volume2, type LucideIcon } from "lucide-react";
+import { AudioLines, Brain, FolderOpen, Info, Keyboard, MessagesSquare, Mic, Play, RefreshCw, ShieldCheck, Sparkles, Volume2, Zap, type LucideIcon } from "lucide-react";
 import { toast } from "sonner";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -85,13 +85,19 @@ export default function Settings({ app, onRunSetup }: { app: ReturnType<typeof u
   const { state, setState, refresh } = app;
   const [name, setName] = useState("");
   const [prompt, setPrompt] = useState("");
+  const [location, setLocation] = useState("");
   const loaded = useRef(false);
+  const savedConfig = useRef<Config | null>(null);
+  const saveQueue = useRef(Promise.resolve());
+  const pendingSaves = useRef(0);
 
   useEffect(() => {
+    if (state && pendingSaves.current === 0) savedConfig.current = state.config;
     if (state && !loaded.current) {
       loaded.current = true;
       setName(state.config.assistant_name);
       setPrompt(state.config.system_prompt ?? "");
+      setLocation(state.config.location);
     }
   }, [state]);
 
@@ -103,18 +109,29 @@ export default function Settings({ app, onRunSetup }: { app: ReturnType<typeof u
   const llmModels = state.ollama.models.includes(c.llm_model) ? state.ollama.models : [c.llm_model, ...state.ollama.models];
 
   async function save(patch: Partial<Config>) {
-    const config = { ...state!.config, ...patch };
-    setState((s) => (s ? { ...s, config } : s));
-    try {
-      const res = await api.saveConfig(config);
-      if (res.restarting) toast(`Restarting ${config.assistant_name} with the new key…`);
-      else if (res.reloading_model) {
-        toast("Loading speech model — progress shows in the sidebar");
-        setTimeout(refresh, 800);
+    savedConfig.current ??= state!.config;
+    ++pendingSaves.current;
+    setState((s) => s ? { ...s, config: { ...s.config, ...patch } } : s);
+    // Persist patches in order, starting from the last successful save. Rapid changes
+    // must not overwrite each other with snapshots from an older render.
+    saveQueue.current = saveQueue.current.then(async () => {
+      const config = { ...savedConfig.current!, ...patch };
+      try {
+        const res = await api.saveConfig(config);
+        savedConfig.current = config;
+        if (res.restarting) toast(`Restarting ${config.assistant_name} with the new key…`);
+        else if (res.reloading_model) {
+          toast("Loading speech model — progress shows in the sidebar");
+        }
+      } catch (e) {
+        toast.error(`Couldn't save: ${e}`);
+      } finally {
+        if (--pendingSaves.current === 0) {
+          setState((s) => s ? { ...s, config: savedConfig.current! } : s);
+        }
       }
-    } catch (e) {
-      toast.error(`Couldn't save: ${e}`);
-    }
+    });
+    await saveQueue.current;
   }
 
   return (
@@ -151,6 +168,32 @@ export default function Settings({ app, onRunSetup }: { app: ReturnType<typeof u
             onChange={(v) => save({ brain: v })}
           />
         </Row>
+        {c.brain === "builtin" && (
+        <Row
+          id="builtin"
+          title="Model"
+          description={`${state.brains.find((b) => b.id === c.builtin_model)?.note ?? ""} This Mac has ${state.ram_gb} GB of memory.`}
+        >
+          <div className="flex items-center gap-2">
+            <Select value={c.builtin_model} onValueChange={(v) => save({ builtin_model: v })}>
+              <SelectTrigger id="builtin" className="w-56"><SelectValue /></SelectTrigger>
+              <SelectContent>
+                {state.brains.map((b) => (
+                  <SelectItem key={b.id} value={b.id}>
+                    {b.label} · {formatSize(b.size_mb)}
+                    {b.min_ram_gb > state.ram_gb && <Badge variant="outline" className="ml-1">needs {b.min_ram_gb} GB</Badge>}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+            {!state.setup.brain_ready && (
+              <Button size="sm" variant="outline" disabled={state.setup.downloads.brain != null} onClick={() => api.downloadModels()}>
+                {state.setup.downloads.brain != null ? `${Math.round((state.setup.downloads.brain ?? 0) * 100)}%` : "Download"}
+              </Button>
+            )}
+          </div>
+        </Row>
+        )}
         {c.brain === "ollama" && (
         <Row
           id="llm"
@@ -191,9 +234,38 @@ export default function Settings({ app, onRunSetup }: { app: ReturnType<typeof u
         <Row id="forget" title="Memory" description="Follow-up questions remember the conversation until it goes quiet for this long.">
           <Choice id="forget" className="w-44" value={c.forget_after_minutes} options={FORGET} format={(v) => `${v} minutes`} onChange={(v) => save({ forget_after_minutes: v })} />
         </Row>
-        <Row id="keep" title="Keep model loaded" description="Loading takes a few seconds; while loaded it uses about 3 GB of memory.">
+        <Row id="keep" title="Keep model loaded" description="Loading takes a few seconds; while loaded the 8B uses about 6 GB of memory (the 4B about 3 GB).">
           <Choice id="keep" className="w-44" value={c.keep_alive} options={KEEP_ALIVE} onChange={(v) => save({ keep_alive: v })} />
         </Row>
+      </Section>
+
+      <Section icon={Zap} tint="bg-indigo-500" title="Actions & web">
+        <Row
+          id="actions"
+          title="Act on this Mac"
+          description="Open apps and websites, search sites, manage browser tabs, find and open files, set timers and reminders, read your calendar, change the volume and control music. macOS asks once before it can use each app. Opening an archive or installer is always asked about first."
+        >
+          <Switch id="actions" checked={c.actions} onCheckedChange={(v) => save({ actions: v })} />
+        </Row>
+        <Row
+          id="web"
+          title="Look things up online"
+          description="Web search, reading pages and the weather. Only your search words and page addresses leave this Mac; your voice and conversation never do."
+        >
+          <Switch id="web" checked={c.web_access} onCheckedChange={(v) => save({ web_access: v })} />
+        </Row>
+        {c.web_access && (
+          <Row id="location" title="Your city" description="For “what's the weather?”. Leave empty to have it guessed from your internet connection.">
+            <Input
+              id="location"
+              className="w-56"
+              value={location}
+              placeholder="e.g. Pune"
+              onChange={(e) => setLocation(e.target.value)}
+              onBlur={() => location.trim() !== c.location && save({ location: location.trim() })}
+            />
+          </Row>
+        )}
       </Section>
 
       <Section icon={Volume2} tint="bg-pink-500" title="Voice">
@@ -302,7 +374,7 @@ export default function Settings({ app, onRunSetup }: { app: ReturnType<typeof u
       </Section>
 
       <Section icon={ShieldCheck} tint="bg-teal-600" title="Privacy">
-        <Row id="history" title="Save history" description="Keep a searchable log of questions and answers on this Mac. Everything — speech, model and voice — runs locally.">
+        <Row id="history" title="Save history" description="Keep a searchable log of questions and answers on this Mac. Speech, the AI and the voice all run locally.">
           <Switch id="history" checked={c.save_history} onCheckedChange={(v) => save({ save_history: v })} />
         </Row>
       </Section>

@@ -64,9 +64,13 @@ export default function History() {
                 <AlertDialogAction
                   variant="destructive"
                   onClick={async () => {
-                    await api.clearHistory();
-                    toast("History cleared");
-                    refresh();
+                    try {
+                      await api.clearHistory();
+                      toast("History cleared");
+                      refresh();
+                    } catch (error) {
+                      toast.error(`Couldn't clear history: ${error}`);
+                    }
                   }}
                 >
                   Delete all

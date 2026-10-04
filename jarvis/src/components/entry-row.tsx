@@ -1,4 +1,4 @@
-import { Check, Copy, Trash2 } from "lucide-react";
+import { Check, Copy, Trash2, Zap } from "lucide-react";
 import { useState } from "react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
@@ -23,6 +23,16 @@ export function EntryRow({ entry, onDeleted }: { entry: Entry; onDeleted?: () =>
         <p data-selectable className="text-[14px] leading-relaxed font-medium break-words">
           {entry.question}
         </p>
+        {!!entry.actions?.length && (
+          <ul className="mt-1.5 flex flex-wrap gap-1">
+            {entry.actions.map((a, i) => (
+              <li key={i} className="flex items-center gap-1 rounded-md bg-muted px-1.5 py-0.5 text-[11px] text-muted-foreground">
+                <Zap className="size-3" />
+                {a}
+              </li>
+            ))}
+          </ul>
+        )}
         <p data-selectable className="mt-1 text-[14px] leading-relaxed break-words whitespace-pre-wrap text-foreground/75">
           {entry.answer}
         </p>
@@ -36,9 +46,13 @@ export function EntryRow({ entry, onDeleted }: { entry: Entry; onDeleted?: () =>
               size="icon-sm"
               aria-label="Copy answer"
               onClick={async () => {
-                await api.copy(entry.answer);
-                setCopied(true);
-                setTimeout(() => setCopied(false), 1200);
+                try {
+                  await api.copy(entry.answer);
+                  setCopied(true);
+                  setTimeout(() => setCopied(false), 1200);
+                } catch (error) {
+                  toast.error(`Couldn't copy: ${error}`);
+                }
               }}
             >
               {copied ? <Check className="text-emerald-600" /> : <Copy />}
@@ -54,9 +68,13 @@ export function EntryRow({ entry, onDeleted }: { entry: Entry; onDeleted?: () =>
                 size="icon-sm"
                 aria-label="Delete"
                 onClick={async () => {
-                  await api.deleteEntry(entry.time);
-                  toast("Deleted");
-                  onDeleted();
+                  try {
+                    await api.deleteEntry(entry.time);
+                    toast("Deleted");
+                    onDeleted();
+                  } catch (error) {
+                    toast.error(`Couldn't delete: ${error}`);
+                  }
                 }}
               >
                 <Trash2 />

@@ -4,7 +4,7 @@ use crate::config::{self, Config};
 use crate::{audio, history, model, permission, speech, Core};
 use serde::Serialize;
 use std::sync::Arc;
-use tauri::{AppHandle, State};
+use tauri::{AppHandle, Emitter, State};
 
 #[derive(Serialize)]
 pub struct ModelInfo {
@@ -12,6 +12,13 @@ pub struct ModelInfo {
     label: &'static str,
     size_mb: u32,
     note: &'static str,
+    downloaded: bool,
+}
+
+#[derive(Serialize)]
+pub struct BrainInfo {
+    #[serde(flatten)]
+    model: &'static model::BrainModel,
     downloaded: bool,
 }
 
@@ -64,6 +71,9 @@ pub struct AppState {
     voices: Vec<speech::Voice>,
     models: Vec<ModelInfo>,
     devices: Vec<String>,
+    /// The built-in AI models to choose from, and the Mac's memory to choose by.
+    brains: Vec<BrainInfo>,
+    ram_gb: u32,
     hotkeys: Vec<Choice>,
     login_enabled: bool,
     version: &'static str,
@@ -102,9 +112,9 @@ pub fn get_state(app: AppHandle, core: State<'_, Arc<Core>>) -> AppState {
         ollama,
         setup: Models {
             speech_ready: model::model_path(&dir, &cfg.whisper_model).exists(),
-            brain_ready: model::brain_path(&dir).exists(),
-            brain_label: model::BRAIN_LABEL,
-            brain_size_mb: model::BRAIN_SIZE_MB,
+            brain_ready: model::brain_path(&dir, &cfg.builtin_model).exists(),
+            brain_label: model::brain(&cfg.builtin_model).label,
+            brain_size_mb: model::brain(&cfg.builtin_model).size_mb,
             downloads: core.downloads.lock().unwrap().clone(),
         },
         voices: speech::voices(),
@@ -113,6 +123,8 @@ pub fn get_state(app: AppHandle, core: State<'_, Arc<Core>>) -> AppState {
             .map(|&(id, label, size_mb, note)| ModelInfo { id, label, size_mb, note, downloaded: model::model_path(&dir, id).exists() })
             .collect(),
         devices: audio::input_device_names(),
+        brains: model::BRAINS.iter().map(|b| BrainInfo { model: b, downloaded: model::brain_path(&dir, b.id).exists() }).collect(),
+        ram_gb: model::ram_gb(),
         hotkeys: hotkeys(),
         login_enabled: app.autolaunch().is_enabled().unwrap_or(false),
         version: env!("CARGO_PKG_VERSION"),
@@ -132,7 +144,7 @@ pub fn save_config(app: AppHandle, core: State<'_, Arc<Core>>, config: Config) -
     if old.voice != config.voice || old.speech_rate != config.speech_rate {
         core.speaker.configure(&config.voice, config.speech_rate);
     }
-    if old.llm_model != config.llm_model || old.brain != config.brain {
+    if old.llm_model != config.llm_model || old.brain != config.brain || old.builtin_model != config.builtin_model || old.ollama_url != config.ollama_url {
         *core.last_warm_up.lock().unwrap() = None;
         core.inner().warm_up_llm();
     }
@@ -194,6 +206,14 @@ pub fn finish_setup(core: State<'_, Arc<Core>>) -> Result<(), String> {
     Ok(())
 }
 
+/// The widget's Yes / No buttons while Jarvis asks before a risky action.
+#[tauri::command]
+pub fn confirm_answer(core: State<'_, Arc<Core>>, yes: bool) {
+    if let Some(tx) = core.pending_confirm.lock().unwrap().as_ref() {
+        let _ = tx.send(yes);
+    }
+}
+
 #[tauri::command]
 pub fn new_conversation(core: State<'_, Arc<Core>>) {
     core.new_conversation();
@@ -206,13 +226,17 @@ pub fn history_list(query: String, limit: Option<usize>) -> Vec<history::Entry> 
 }
 
 #[tauri::command]
-pub fn history_delete(time: String) -> Result<(), String> {
-    history::delete(&time).map_err(|e| e.to_string())
+pub fn history_delete(app: AppHandle, time: String) -> Result<(), String> {
+    history::delete(&time).map_err(|e| e.to_string())?;
+    let _ = app.emit_to("main", "history-updated", ());
+    Ok(())
 }
 
 #[tauri::command]
-pub fn history_clear() -> Result<(), String> {
-    history::clear().map_err(|e| e.to_string())
+pub fn history_clear(app: AppHandle) -> Result<(), String> {
+    history::clear().map_err(|e| e.to_string())?;
+    let _ = app.emit_to("main", "history-updated", ());
+    Ok(())
 }
 
 #[tauri::command]

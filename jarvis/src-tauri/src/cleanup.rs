@@ -15,10 +15,7 @@ static SOFT_FILLERS_MID: LazyLock<Regex> =
     LazyLock::new(|| Regex::new(r"(?i),\s*(?:you know|i mean)\s*,").unwrap());
 static SOFT_FILLERS_START: LazyLock<Regex> =
     LazyLock::new(|| Regex::new(r"(?i)(^|[.!?]\s+)(?:you know|i mean|so,? like)\s*,\s*(\w)").unwrap());
-/// "at 10.30" / "10.30 pm" → "10:30" (Whisper writes spoken times with a dot).
-static TIME_AFTER_WORD: LazyLock<Regex> = LazyLock::new(|| {
-    Regex::new(r"(?i)\b(at|by|until|till|from|around|before|after|to)\s+(\d{1,2})\.([0-5]\d)\b").unwrap()
-});
+/// Only an explicit am/pm suffix identifies a time: "at 10.30" can be a price.
 static TIME_BEFORE_AMPM: LazyLock<Regex> =
     LazyLock::new(|| Regex::new(r"(?i)\b(\d{1,2})\.([0-5]\d)(\s*)(am|pm|a\.m\.|p\.m\.)").unwrap());
 static DOUBLE_COMMA: LazyLock<Regex> = LazyLock::new(|| Regex::new(r",\s*([,.!?])").unwrap());
@@ -38,7 +35,6 @@ pub fn clean(raw: &str, remove_fillers: bool) -> String {
             .into_owned();
         s = dedupe_words(&s);
     }
-    s = TIME_AFTER_WORD.replace_all(&s, "$1 $2:$3").into_owned();
     s = TIME_BEFORE_AMPM.replace_all(&s, "$1:$2$3$4").into_owned();
     s = SPACE_BEFORE_PUNCT.replace_all(&s, "$1").into_owned();
     s = DOUBLE_COMMA.replace_all(&s, "$1").into_owned();
@@ -74,5 +70,21 @@ fn capitalize_first(s: &str) -> String {
     match chars.next() {
         Some(c) => c.to_uppercase().chain(chars).collect(),
         None => String::new(),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn preserves_prices_and_measurements() {
+        assert_eq!(clean("tomatoes at 10.30 rupees", true), "Tomatoes at 10.30 rupees");
+        assert_eq!(clean("from 1.25 to 2.50", true), "From 1.25 to 2.50");
+    }
+
+    #[test]
+    fn formats_explicit_times() {
+        assert_eq!(clean("at 10.30 pm", true), "At 10:30 pm");
     }
 }

@@ -4,6 +4,12 @@
 <dict>
   <key>NSMicrophoneUsageDescription</key>
   <string>Jarvis listens only while you hold its key, and understands you on this Mac.</string>
+  <key>NSAppleEventsUsageDescription</key>
+  <string>Jarvis controls apps when you ask it to: your browser's tabs, music, reminders and dark mode.</string>
+  <key>NSCalendarsFullAccessUsageDescription</key>
+  <string>Jarvis reads your calendar when you ask what's coming up. It stays on this Mac.</string>
+  <key>NSCalendarsUsageDescription</key>
+  <string>Jarvis reads your calendar when you ask what's coming up. It stays on this Mac.</string>
   <key>LSUIElement</key>
   <true/>
 </dict>

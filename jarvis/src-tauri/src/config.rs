@@ -17,6 +17,8 @@ pub struct Config {
     pub input_device: Option<String>,
     /// "builtin" (the AI bundled with Jarvis) or "ollama" (an Ollama the user runs themselves).
     pub brain: String,
+    /// Which built-in model: "8b" (the default) or "4b", lighter (see `model::BRAINS`).
+    pub builtin_model: String,
     /// Where Ollama is listening.
     pub ollama_url: String,
     /// Any model from `ollama list`, e.g. "qwen3:8b", "qwen2.5:7b".
@@ -48,6 +50,15 @@ pub struct Config {
     pub speech_threshold: f32,
     /// Keep a local log of questions and answers (History page).
     pub save_history: bool,
+    /// Let the assistant act on the Mac: open apps and websites, set timers and reminders,
+    /// read the calendar, change the volume and so on.
+    pub actions: bool,
+    /// Let the assistant look things up online (web search, reading pages, weather). Only the
+    /// search words and page addresses leave the Mac.
+    pub web_access: bool,
+    /// Place used for the weather when none is named ("Pune", "London"). Empty: the location
+    /// the weather service guesses from your internet connection.
+    pub location: String,
     /// The first-run setup has been completed (or skipped).
     pub setup_done: bool,
 }
@@ -60,6 +71,7 @@ impl Default for Config {
             language: "en".into(),
             input_device: None,
             brain: "builtin".into(),
+            builtin_model: crate::model::BRAINS[0].id.into(),
             ollama_url: "http://localhost:11434".into(),
             llm_model: "qwen3:8b".into(),
             keep_alive: "30m".into(),
@@ -75,6 +87,9 @@ impl Default for Config {
             conversation_timeout_seconds: 20,
             speech_threshold: 0.012,
             save_history: true,
+            actions: true,
+            web_access: true,
+            location: String::new(),
             setup_done: false,
         }
     }

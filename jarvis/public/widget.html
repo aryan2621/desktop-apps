@@ -99,12 +99,25 @@
     .error .label { color: var(--error); white-space: normal; line-height: 1.3; font-size: 12px; }
     .pill.error { height: auto; min-height: 44px; padding: 8px 16px; border-radius: 18px; }
     .ok .label { color: var(--fg); }
+    /* Asking before a risky action: Yes / No under the question. */
+    .confirm { display: flex; gap: 8px; margin-top: 10px; }
+    .confirm button {
+      flex: 1; height: 30px; border-radius: 10px; cursor: pointer;
+      font: 600 13px/1 -apple-system, BlinkMacSystemFont, system-ui, sans-serif;
+      color: var(--fg); background: rgba(255,255,255,.08); border: 1px solid var(--border);
+    }
+    .confirm button.yes { background: var(--accent); border-color: var(--accent); color: #0b1220; }
+    .confirm button:hover { filter: brightness(1.1); }
   </style>
 </head>
 <body>
   <div class="card hidden" id="card">
     <div class="question" id="question"></div>
     <div class="reply" id="reply"></div>
+    <div class="confirm hidden" id="confirm">
+      <button class="yes" id="yes">Yes</button>
+      <button id="no">No</button>
+    </div>
   </div>
   <div class="pill" id="pill">
     <span class="dot" id="dot"></span>
@@ -117,7 +130,7 @@
   <script>
     const $ = (id) => document.getElementById(id);
     const pill = $("pill"), dot = $("dot"), wave = $("wave"), label = $("label"), bar = $("bar"), barFill = $("barFill"), icon = $("icon");
-    const card = $("card"), question = $("question"), reply = $("reply");
+    const card = $("card"), question = $("question"), reply = $("reply"), confirmRow = $("confirm");
     const ctx = wave.getContext("2d");
 
     // --- Waveform -------------------------------------------------------------------
@@ -192,7 +205,7 @@
         return;
       }
       question.textContent = q ? `“${q}”` : "";
-      reply.textContent = thinking ? "Thinking…" : text;
+      reply.textContent = thinking ? text || "Thinking…" : text;
       reply.className = "reply" + (thinking ? " thinking" : "");
       card.className = "card visible";
       reply.scrollTop = reply.scrollHeight;
@@ -200,7 +213,13 @@
     }
 
     function setState({ state, message, progress, question: q, reply: text }) {
+      confirmRow.classList.toggle("hidden", state !== "confirm");
       switch (state) {
+        case "confirm": // `message` is the question, e.g. "Move report.pdf to the Trash?"
+          showCard("", message || "Are you sure?", false);
+          show({ icon: "chat", wave: true, label: "Say yes or no" });
+          animate("recording");
+          break;
         case "recording":
           showCard(null);
           show({ dot: true, wave: true });
@@ -214,8 +233,8 @@
           show({ wave: true });
           animate("wave");
           break;
-        case "thinking":
-          showCard(q, "", true);
+        case "thinking": // `text` says what it's doing, e.g. "Searching the web…"
+          showCard(q, text || "", true);
           show({ wave: true });
           animate("wave");
           break;
@@ -260,10 +279,17 @@
     const resized = new ResizeObserver(reportHitRects);
     draggable.forEach((el) => resized.observe(el));
     document.addEventListener("mousedown", (e) => {
-      if (e.button !== 0 || !draggable.some((el) => el.contains(e.target))) return;
+      if (e.button !== 0 || e.target.closest("button") || !draggable.some((el) => el.contains(e.target))) return;
       e.preventDefault();
       window.__TAURI__.core.invoke("widget_drag").catch((err) => log(`drag failed: ${err}`));
     });
+
+    const answer = (yes) => {
+      confirmRow.classList.add("hidden");
+      window.__TAURI__.core.invoke("confirm_answer", { yes }).catch((err) => log(`confirm failed: ${err}`));
+    };
+    $("yes").addEventListener("click", () => answer(true));
+    $("no").addEventListener("click", () => answer(false));
 
     const { listen } = window.__TAURI__.event;
     listen("widget-state", (e) => {

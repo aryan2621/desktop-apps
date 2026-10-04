@@ -46,10 +46,10 @@ if (previewSetup) {
 }
 let config: Config = {
   hotkey: "right_option", whisper_model: "large-v3-turbo-q5_0", language: "en", input_device: null,
-  brain: "builtin", ollama_url: "http://localhost:11434", llm_model: "qwen3:8b", keep_alive: "30m", system_prompt: null,
+  brain: "builtin", builtin_model: "8b", ollama_url: "http://localhost:11434", llm_model: "qwen3:8b", keep_alive: "30m", system_prompt: null,
   assistant_name: "Jarvis", voice: "Tara", speech_rate: 195, speak_replies: true, sounds: true,
   forget_after_minutes: 5, history_turns: 8, pause_seconds: 2, conversation_timeout_seconds: 20,
-  speech_threshold: 0.012, save_history: true, setup_done: !previewSetup,
+  speech_threshold: 0.012, save_history: true, actions: true, web_access: true, location: "", setup_done: !previewSetup,
 };
 
 const state = (): AppState => ({
@@ -57,7 +57,7 @@ const state = (): AppState => ({
   permissions: { accessibility: !fresh, microphone: fresh ? "not_asked" : "granted" },
   ollama: { running: true, models: ["ministral-3:8b", "qwen2.5:7b", "qwen3:8b"], error: null },
   setup: {
-    speech_ready: !fresh || (dl !== null && dl >= 0.99), brain_ready: !fresh, brain_label: "Qwen3 4B", brain_size_mb: 2382,
+    speech_ready: !fresh || (dl !== null && dl >= 0.99), brain_ready: !fresh, brain_label: "Qwen3 8B", brain_size_mb: 4795,
     downloads: dl !== null ? { speech: Math.min(1, dl * 2.5), brain: dl } : {},
   },
   voices: [
@@ -70,6 +70,11 @@ const state = (): AppState => ({
     { id: "small.en", label: "Small (English)", size_mb: 466, note: "Faster, English only.", downloaded: false },
   ],
   devices: ["MacBook Pro Microphone", "AirPods Pro"],
+  brains: [
+    { id: "8b", label: "Qwen3 8B", size_mb: 4795, min_ram_gb: 16, note: "The built-in AI. Accurate with multi-step tasks like clicking through pages and apps.", downloaded: true },
+    { id: "4b", label: "Qwen3 4B", size_mb: 2382, min_ram_gb: 8, note: "Lighter and quicker, for Macs with less than 16 GB of memory. Weaker at multi-step tasks.", downloaded: false },
+  ],
+  ram_gb: 16,
   hotkeys: [{ id: "right_option", label: "Right Option ⌥" }, { id: "right_command", label: "Right Command ⌘" }],
   login_enabled: true, version: "0.1.0", data_dir: "~/Library/Application Support/Jarvis",
 });
