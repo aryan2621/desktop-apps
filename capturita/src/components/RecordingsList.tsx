@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { revealItemInDir } from '@tauri-apps/plugin-opener';
-import { AppWindow, Camera, Check, Crop, FolderOpen, Mic, Monitor, Trash2, Volume2, X } from 'lucide-react';
+import { AppWindow, Camera, Check, Clock, Crop, Film, FolderOpen, Mic, Monitor, MousePointerClick, Sparkles, Trash2, Volume2, X } from 'lucide-react';
 import { toast } from 'sonner';
 import { api, errorMessage, fileUrl, formatDuration, type Project } from '../lib/api';
 import { IconButton, Kbd } from './ui';
@@ -26,6 +26,75 @@ function whenRecorded(iso: string) {
 
 const SOURCE_ICONS = { display: Monitor, window: AppWindow, area: Crop };
 
+/** "Good morning" … by the time of day. */
+function greeting() {
+    const hour = new Date().getHours();
+    return hour < 5 ? 'Working late' : hour < 12 ? 'Good morning' : hour < 17 ? 'Good afternoon' : 'Good evening';
+}
+
+/** Total length in words: "45 sec", "12 min", "1 h 5 min". */
+function totalLength(seconds: number) {
+    if (seconds < 60) return `${Math.round(seconds)} sec`;
+    const minutes = Math.round(seconds / 60);
+    return minutes < 60 ? `${minutes} min` : `${Math.floor(minutes / 60)} h ${minutes % 60} min`;
+}
+
+/** The library's heading: a greeting, and how much is in it. */
+export function LibraryHeader({ recordings }: { recordings: Project[] }) {
+    const seconds = recordings.reduce((sum, project) => sum + project.duration, 0);
+    return (
+        <div className='flex flex-wrap items-end justify-between gap-3'>
+            <div>
+                <p className='text-sm text-subtle'>{greeting()}</p>
+                <h2 className='font-serif text-3xl font-medium tracking-tight'>
+                    {recordings.length ? 'Your recordings' : "Let's make your first one"}
+                </h2>
+            </div>
+            {recordings.length > 0 && (
+                <div className='flex gap-2'>
+                    <span className='inline-flex items-center gap-1.5 rounded-full bg-panel-2 px-3 py-1 text-xs text-muted'>
+                        <Film className='h-3.5 w-3.5' />
+                        {recordings.length} {recordings.length === 1 ? 'recording' : 'recordings'}
+                    </span>
+                    <span className='inline-flex items-center gap-1.5 rounded-full bg-panel-2 px-3 py-1 text-xs text-muted'>
+                        <Clock className='h-3.5 w-3.5' />
+                        {totalLength(seconds)}
+                    </span>
+                </div>
+            )}
+        </div>
+    );
+}
+
+/** Groups newest-first recordings under Today / Yesterday / This week / Earlier. */
+function groupByDay(recordings: Project[]) {
+    const startOfToday = new Date();
+    startOfToday.setHours(0, 0, 0, 0);
+    const day = 24 * 60 * 60 * 1000;
+    const groups: { label: string; items: Project[] }[] = [];
+    for (const project of recordings) {
+        const time = new Date(project.createdAt).getTime();
+        const label =
+            time >= startOfToday.getTime()
+                ? 'Today'
+                : time >= startOfToday.getTime() - day
+                  ? 'Yesterday'
+                  : time >= startOfToday.getTime() - 6 * day
+                    ? 'This week'
+                    : 'Earlier';
+        const last = groups[groups.length - 1];
+        if (last?.label === label) last.items.push(project);
+        else groups.push({ label, items: [project] });
+    }
+    return groups;
+}
+
+const STEPS = [
+    { icon: MousePointerClick, title: 'Pick what to record', text: 'A whole screen, one window, or an area — on the left.' },
+    { icon: Film, title: 'Record', text: 'Hit Start, or press ⌘⇧R from any app. Press it again to stop.' },
+    { icon: Sparkles, title: 'Polish it', text: 'Auto-zooms, captions, hidden private info, then export or upload.' },
+];
+
 export function RecordingsList({
     recordings,
     onOpen,
@@ -37,23 +106,43 @@ export function RecordingsList({
 }) {
     if (recordings.length === 0) {
         return (
-            <div className='flex flex-1 flex-col items-center justify-center gap-4 rounded-2xl border border-dashed border-line p-10 text-center'>
+            <div className='flex flex-1 flex-col items-center justify-center gap-8 rounded-2xl border border-dashed border-line p-10 text-center'>
                 <EmptyIllustration />
-                <div className='space-y-1'>
-                    <p className='font-semibold'>No recordings yet</p>
-                    <p className='max-w-xs text-sm text-muted'>Pick a screen, window or area on the left and start recording. Your recordings show up here.</p>
-                </div>
+                <ol className='grid w-full max-w-2xl gap-3 text-left sm:grid-cols-3'>
+                    {STEPS.map((step, index) => (
+                        <li key={step.title} className='rounded-xl border border-line bg-panel p-4'>
+                            <div className='mb-3 flex items-center gap-2'>
+                                <span className='flex h-6 w-6 items-center justify-center rounded-full bg-accent font-serif text-xs font-medium text-accent-fg'>
+                                    {index + 1}
+                                </span>
+                                <step.icon className='h-4 w-4 text-muted' />
+                            </div>
+                            <p className='text-sm font-medium'>{step.title}</p>
+                            <p className='mt-1 text-xs leading-relaxed text-muted'>{step.text}</p>
+                        </li>
+                    ))}
+                </ol>
                 <p className='text-xs text-subtle'>
-                    Tip: press <Kbd>⌘⇧R</Kbd> from any app to start and stop.
+                    Tip: <Kbd>⌘⇧R</Kbd> starts and stops a recording from any app.
                 </p>
             </div>
         );
     }
 
     return (
-        <div className='grid grid-cols-[repeat(auto-fill,minmax(250px,1fr))] gap-4'>
-            {recordings.map((project) => (
-                <RecordingCard key={project.id} project={project} onOpen={() => onOpen(project)} onDeleted={onDeleted} />
+        <div className='space-y-6'>
+            {groupByDay(recordings).map((group) => (
+                <section key={group.label} className='space-y-3'>
+                    <h3 className='flex items-center gap-3 text-xs font-semibold uppercase tracking-wider text-subtle'>
+                        {group.label}
+                        <span className='h-px flex-1 bg-line' />
+                    </h3>
+                    <div className='grid grid-cols-[repeat(auto-fill,minmax(250px,1fr))] gap-4'>
+                        {group.items.map((project) => (
+                            <RecordingCard key={project.id} project={project} onOpen={() => onOpen(project)} onDeleted={onDeleted} />
+                        ))}
+                    </div>
+                </section>
             ))}
         </div>
     );

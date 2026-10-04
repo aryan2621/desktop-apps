@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useRef, useState, type ReactNode } from 'react';
 import { listen } from '@tauri-apps/api/event';
 import { getCurrentWindow } from '@tauri-apps/api/window';
-import { AppWindow, Camera, CameraOff, Check, Crop, Mic, MicOff, Monitor, RefreshCw, Search, Volume2, VolumeX } from 'lucide-react';
+import { AppWindow, Camera, CameraOff, Check, Crop, EyeOff, Mic, MicOff, Monitor, RefreshCw, Search, Volume2, VolumeX, ZoomIn } from 'lucide-react';
 import { toast } from 'sonner';
 import { api, errorMessage, type Display, type Permissions, type RecordingOptions, type Rect, type SourceList, type Thumbnails, type WindowSource } from '../lib/api';
 import { Button, IconButton, Kbd, Popover, Segmented, Switch, cx } from './ui';
@@ -185,12 +185,20 @@ export function RecorderPanel({ permissions, onPermissionsChange }: { permission
     }, []);
 
     const ready = typeof buildOptions() !== 'string';
+    const recordDisplay = displays.find((d) => d.id === displayId);
+    const sourceLabel =
+        settings.mode === 'window'
+            ? selectedWindow?.app ?? 'a window'
+            : settings.mode === 'area'
+              ? `an area of ${areaDisplay?.name ?? 'the screen'}`
+              : recordDisplay?.name ?? 'the screen';
+    const notReady = !screenGranted ? 'Allow screen recording first' : ready ? null : (buildOptions() as string);
 
     return (
         <section className='flex min-h-0 flex-1 flex-col overflow-hidden rounded-2xl border border-line bg-panel shadow-sm'>
             <div className='space-y-3 border-b border-line p-4'>
                 <div className='flex items-center justify-between'>
-                    <h2 className='text-sm font-semibold'>New recording</h2>
+                    <h2 className='font-serif text-lg font-medium tracking-tight'>New recording</h2>
                     <IconButton label='Refresh screens and windows' size='icon-sm' onClick={refreshSources} disabled={loadingSources || !screenGranted}>
                         <RefreshCw className={cx('h-3.5 w-3.5', loadingSources && 'animate-spin')} />
                     </IconButton>
@@ -218,7 +226,7 @@ export function RecorderPanel({ permissions, onPermissionsChange }: { permission
                 )}
             </div>
 
-            <div className='min-h-0 flex-1 overflow-y-auto p-4'>
+            <div className='flex min-h-0 flex-1 flex-col overflow-y-auto p-4'>
                 {!screenGranted ? (
                     <p className='p-6 text-center text-sm text-muted'>Allow screen recording to see your screens and windows here.</p>
                 ) : !sources ? (
@@ -303,26 +311,30 @@ export function RecorderPanel({ permissions, onPermissionsChange }: { permission
                         )}
                     </div>
                 )}
+                {screenGranted && <Tip mode={settings.mode} />}
             </div>
 
             {/* Record bar */}
             <div className='space-y-3 border-t border-line bg-panel-2/60 p-4'>
-                <div className='flex items-center gap-2'>
+                <div className='grid grid-cols-3 gap-2'>
                     <ToggleChip
                         active={settings.systemAudio}
                         onClick={() => update({ systemAudio: !settings.systemAudio })}
-                        label={settings.systemAudio ? 'System audio: on' : 'System audio: off'}
-                        icon={settings.systemAudio ? <Volume2 className='h-4 w-4' /> : <VolumeX className='h-4 w-4' />}
+                        label='Mac audio'
+                        status={settings.systemAudio ? 'On' : 'Off'}
+                        icon={settings.systemAudio ? <Volume2 className='h-3.5 w-3.5' /> : <VolumeX className='h-3.5 w-3.5' />}
                     />
                     <Popover
                         side='top'
+                        align='center'
                         trigger={(open, toggle) => (
                             <ToggleChip
                                 active={!!microphone}
                                 pressed={open}
                                 onClick={toggle}
-                                label={microphone ? `Microphone: ${microphone.name}` : 'Microphone: off'}
-                                icon={microphone ? <Mic className='h-4 w-4' /> : <MicOff className='h-4 w-4' />}
+                                label='Microphone'
+                                status={microphone ? microphone.name : 'Off'}
+                                icon={microphone ? <Mic className='h-3.5 w-3.5' /> : <MicOff className='h-3.5 w-3.5' />}
                             />
                         )}
                     >
@@ -351,13 +363,15 @@ export function RecorderPanel({ permissions, onPermissionsChange }: { permission
                     </Popover>
                     <Popover
                         side='top'
+                        align='end'
                         trigger={(open, toggle) => (
                             <ToggleChip
                                 active={cameraVisible && !!camera}
                                 pressed={open}
                                 onClick={toggle}
-                                label={cameraVisible && camera ? `Camera: ${camera.name}` : 'Camera: off'}
-                                icon={cameraVisible && camera ? <Camera className='h-4 w-4' /> : <CameraOff className='h-4 w-4' />}
+                                label='Camera'
+                                status={cameraVisible && camera ? camera.name : 'Off'}
+                                icon={cameraVisible && camera ? <Camera className='h-3.5 w-3.5' /> : <CameraOff className='h-3.5 w-3.5' />}
                             />
                         )}
                     >
@@ -376,10 +390,17 @@ export function RecorderPanel({ permissions, onPermissionsChange }: { permission
                             </div>
                         )}
                     </Popover>
-                    <span className='ml-auto truncate text-xs text-muted'>
-                        {settings.mode === 'window' ? selectedWindow?.app ?? 'No window chosen' : settings.mode === 'area' ? (settings.area ? 'Area selected' : 'No area yet') : areaDisplay?.name}
-                    </span>
                 </div>
+                <p className='flex items-center gap-2 text-xs'>
+                    <span className={cx('h-1.5 w-1.5 shrink-0 rounded-full', notReady ? 'bg-warning' : 'bg-success')} />
+                    {notReady ? (
+                        <span className='truncate text-warning-fg'>{notReady}</span>
+                    ) : (
+                        <span className='truncate text-muted'>
+                            Ready to record <span className='font-medium text-fg'>{sourceLabel}</span>
+                        </span>
+                    )}
+                </p>
                 <Button
                     variant='record'
                     size='lg'
@@ -388,7 +409,10 @@ export function RecorderPanel({ permissions, onPermissionsChange }: { permission
                     disabled={!screenGranted || busy || !ready}
                     title={!screenGranted ? 'Allow screen recording first' : ready ? 'Start recording (⌘⇧R)' : (buildOptions() as string)}
                 >
-                    <span className='h-3 w-3 rounded-full bg-white' />
+                    <span className='relative flex h-3 w-3'>
+                        {!notReady && <span className='absolute inset-0 animate-ping rounded-full bg-white/60' />}
+                        <span className='relative h-3 w-3 rounded-full bg-white' />
+                    </span>
                     Start recording
                 </Button>
                 <p className='text-center text-xs text-subtle'>
@@ -466,21 +490,49 @@ function WindowCard({ window, image, selected, onSelect }: { window: WindowSourc
     );
 }
 
-function ToggleChip({ active, pressed, onClick, label, icon }: { active: boolean; pressed?: boolean; onClick: () => void; label: string; icon: ReactNode }) {
+/** An input to record (system audio, mic, camera): what it is, and what it's set to. */
+function ToggleChip({ active, pressed, onClick, label, status, icon }: { active: boolean; pressed?: boolean; onClick: () => void; label: string; status: string; icon: ReactNode }) {
     return (
         <button
             onClick={onClick}
-            title={label}
-            aria-label={label}
+            title={`${label}: ${status}`}
+            aria-label={`${label}: ${status}`}
             aria-pressed={active}
             className={cx(
-                'flex h-9 w-9 items-center justify-center rounded-full border transition-colors',
-                active ? 'border-accent/40 bg-accent/15 text-accent' : 'border-line bg-panel text-subtle hover:text-fg',
+                'flex w-full min-w-0 flex-col items-start gap-0.5 rounded-xl border px-3 py-2 text-left transition-colors',
+                active ? 'border-accent/40 bg-accent/10' : 'border-line bg-panel hover:border-line-strong',
                 pressed && 'ring-2 ring-accent/30'
             )}
         >
-            {icon}
+            <span className={cx('flex items-center gap-1.5 whitespace-nowrap text-xs font-medium', active ? 'text-accent' : 'text-muted')}>
+                {icon}
+                {label}
+            </span>
+            <span className='w-full truncate text-[11px] text-subtle'>{status}</span>
         </button>
+    );
+}
+
+const TIPS = {
+    display: { icon: ZoomIn, text: 'Auto-zoom follows your cursor, so details stay readable.' },
+    window: { icon: Camera, text: 'The camera bubble is recorded separately: move or hide it later.' },
+    area: { icon: EyeOff, text: 'Blur emails or keys later in the editor, no need to re-record.' },
+};
+
+/** A small tip at the bottom of the source list, for the mode picked. */
+function Tip({ mode }: { mode: Mode }) {
+    const tip = TIPS[mode];
+    return (
+        <div className='mt-auto pt-4'>
+        <div className='flex items-center gap-2.5 rounded-xl bg-panel-2/70 px-3 py-2 text-xs text-muted'>
+            <span className='flex h-6 w-6 shrink-0 items-center justify-center rounded-md bg-accent/15 text-accent'>
+                <tip.icon className='h-3.5 w-3.5' />
+            </span>
+            <span>
+                <span className='font-medium text-fg'>Tip:</span> {tip.text}
+            </span>
+        </div>
+        </div>
     );
 }
 

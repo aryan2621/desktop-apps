@@ -9,7 +9,7 @@ import { PermissionsBanner } from '../components/PermissionsBanner';
 import { SetupFlow } from '../components/SetupFlow';
 import { resumeStep, setResumeStep, setupDone, type SetupStep } from '../lib/setup';
 import { RecorderPanel } from '../components/RecorderPanel';
-import { RecordingsList } from '../components/RecordingsList';
+import { LibraryHeader, RecordingsList } from '../components/RecordingsList';
 import { EditorView } from './EditorView';
 import { IconButton } from '../components/ui';
 import { ThemeToggle } from '../components/ThemeToggle';
@@ -103,10 +103,7 @@ export function MainWindow() {
                     <RecorderPanel permissions={permissions} onPermissionsChange={setPermissions} />
                 </div>
                 <section className='flex min-w-0 flex-1 flex-col gap-4 overflow-y-auto'>
-                    <div className='flex items-baseline gap-2'>
-                        <h2 className='font-serif text-xl font-medium tracking-tight'>Recordings</h2>
-                        {recordings.length > 0 && <span className='text-sm text-subtle'>{recordings.length}</span>}
-                    </div>
+                    <LibraryHeader recordings={recordings} />
                     <RecordingsList recordings={recordings} onOpen={setEditing} onDeleted={refreshRecordings} />
                 </section>
             </main>
