@@ -10,6 +10,9 @@ const defaults: PortmanSettings = {
   refreshInterval: 3,
   accentColor: '#6C63FF',
   startupOnLogin: false,
+  hideSystem: true,
+  defaultFilter: 'ALL',
+  confirmByTyping: true,
 }
 
 function isThemeMode(v: unknown): v is PortmanSettings['theme'] {
@@ -38,6 +41,10 @@ function loadSettings(): PortmanSettings {
       refreshInterval: clampRefreshInterval(parsed.refreshInterval),
       accentColor: parseAccentColor(parsed.accentColor),
       startupOnLogin: defaults.startupOnLogin,
+      hideSystem: typeof parsed.hideSystem === 'boolean' ? parsed.hideSystem : defaults.hideSystem,
+      defaultFilter: parsed.defaultFilter === 'LISTEN' ? 'LISTEN' : defaults.defaultFilter,
+      confirmByTyping:
+        typeof parsed.confirmByTyping === 'boolean' ? parsed.confirmByTyping : defaults.confirmByTyping,
     }
   } catch {
     return defaults

@@ -322,8 +322,19 @@ fn main() {
         })
         .on_window_event(|event| match event.event() {
             tauri::WindowEvent::CloseRequested { api, .. } => {
-                event.window().hide().unwrap();
                 api.prevent_close();
+                let window = event.window().clone();
+                // Hiding a full-screen window leaves its Space behind as a black screen, so leave
+                // full screen first and hide once macOS has finished the animation.
+                if window.is_fullscreen().unwrap_or(false) {
+                    let _ = window.set_fullscreen(false);
+                    std::thread::spawn(move || {
+                        std::thread::sleep(std::time::Duration::from_millis(800));
+                        let _ = window.hide();
+                    });
+                } else {
+                    let _ = window.hide();
+                }
             }
             _ => {}
         })

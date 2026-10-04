@@ -1,4 +1,5 @@
 import { useState, useEffect, useMemo } from 'react'
+import { toast } from 'sonner'
 import {
   Search,
   RefreshCw,
@@ -8,11 +9,14 @@ import {
   AlertCircle,
   Zap,
   LayoutGrid,
+  ShieldCheck,
 } from 'lucide-react'
 import PortTable from '../components/PortTable'
 import Modal from '../components/Modal'
 import Badge, { stateBadgeVariant } from '../components/Badge'
 import { stablePortRowKey, type KillResult, type Port } from '../types'
+import { dedupePorts, isSystemPort } from '../portKinds'
+import { useSettings } from '../settings/settings-context'
 
 interface PortsProps {
   ports: Port[]
@@ -37,9 +41,10 @@ function Ports({
   onRefresh,
   changedKeys,
 }: PortsProps) {
+  const { settings, updateSetting } = useSettings()
   const [searchQuery, setSearchQuery] = useState('')
   const [debouncedSearch, setDebouncedSearch] = useState('')
-  const [activeFilter, setActiveFilter] = useState<FilterState>('ALL')
+  const [activeFilter, setActiveFilter] = useState<FilterState>(settings.defaultFilter)
 
   const [infoPort, setInfoPort] = useState<Port | null>(null)
   const [killConfirmPort, setKillConfirmPort] = useState<Port | null>(null)
@@ -47,7 +52,6 @@ function Ports({
   const [bulkTargets, setBulkTargets] = useState<Port[] | null>(null)
   const [bulkTypeConfirm, setBulkTypeConfirm] = useState('')
   const [killError, setKillError] = useState<string | null>(null)
-  const [killNotice, setKillNotice] = useState<string | null>(null)
   const [killing, setKilling] = useState(false)
 
   useEffect(() => {
@@ -55,18 +59,17 @@ function Ports({
     return () => clearTimeout(t)
   }, [searchQuery])
 
-  useEffect(() => {
-    if (!killNotice) return
-    const t = window.setTimeout(() => setKillNotice(null), 4000)
-    return () => clearTimeout(t)
-  }, [killNotice])
+
+  const uniquePorts = useMemo(() => dedupePorts(ports), [ports])
+  const systemCount = useMemo(() => uniquePorts.filter(isSystemPort).length, [uniquePorts])
 
   const filteredPorts = useMemo(() => {
-    return ports.filter((p) => {
+    return uniquePorts.filter((p) => {
+      if (settings.hideSystem && isSystemPort(p)) return false
       if (activeFilter === 'ALL') return true
       return p.state.toUpperCase() === activeFilter
     })
-  }, [ports, activeFilter])
+  }, [uniquePorts, activeFilter, settings.hideSystem])
 
   const portStats = useMemo(() => {
     let listening = 0
@@ -80,9 +83,9 @@ function Ports({
       visible: filteredPorts.length,
       listening,
       established,
-      totalAllStates: ports.length,
+      totalAllStates: uniquePorts.length,
     }
-  }, [filteredPorts, ports.length])
+  }, [filteredPorts, uniquePorts.length])
 
   const filters: { key: FilterState; label: string; icon: typeof Radio }[] = [
     { key: 'ALL', label: 'All', icon: Zap },
@@ -99,10 +102,12 @@ function Ports({
     setKillConfirmPort(port)
   }
 
+  // With typing turned off in Settings, the dialog still asks; the Kill button just works at once.
   const confirmTextMatches = killConfirmPort
-    ? killTypeConfirm.trim() === String(killConfirmPort.port)
+    ? !settings.confirmByTyping || killTypeConfirm.trim() === String(killConfirmPort.port)
     : false
-  const bulkConfirmMatches = bulkTypeConfirm.trim() === BULK_CONFIRM_TEXT
+  const bulkConfirmMatches =
+    !settings.confirmByTyping || bulkTypeConfirm.trim() === BULK_CONFIRM_TEXT
 
   const confirmKill = async () => {
     if (!killConfirmPort || killing) return
@@ -123,9 +128,9 @@ function Ports({
       setKillError(result.error || 'Failed')
       return
     }
-    setKillNotice(
+    toast.success(
       result.message ||
-        `Terminated ${killConfirmPort.process_name || 'process'} (PID ${killConfirmPort.pid})`,
+        `Stopped ${killConfirmPort.process_name || 'process'} (PID ${killConfirmPort.pid}) on port ${killConfirmPort.port}`,
     )
     setKillConfirmPort(null)
     setKillTypeConfirm('')
@@ -152,7 +157,7 @@ function Ports({
       }
     }
     setKilling(false)
-    setKillNotice(`Terminated ${seenPids.size} process(es).`)
+    toast.success(`Stopped ${seenPids.size} ${seenPids.size === 1 ? 'process' : 'processes'}`)
     setBulkTargets(null)
     setBulkTypeConfirm('')
     setKillError(null)
@@ -187,7 +192,6 @@ function Ports({
         </div>
       </header>
 
-      {killNotice && <div className="page-banner">{killNotice}</div>}
       <div className="ports-stats" aria-label="Port summary">
         <div className="stat-chip stat-accent">
           <LayoutGrid size={18} className="stat-icon" aria-hidden />
@@ -246,6 +250,22 @@ function Ports({
             </button>
           ))}
         </div>
+        {systemCount > 0 && (
+          <button
+            type="button"
+            className={`filter-pill system-toggle no-drag ${settings.hideSystem ? '' : 'active'}`}
+            aria-pressed={!settings.hideSystem}
+            title={
+              settings.hideSystem
+                ? 'Ports held by macOS/Windows/Linux itself are hidden. Click to show them.'
+                : 'Click to hide ports held by the operating system itself.'
+            }
+            onClick={() => updateSetting('hideSystem', !settings.hideSystem)}
+          >
+            <ShieldCheck size={14} />
+            {settings.hideSystem ? `${systemCount} system hidden` : `Showing ${systemCount} system`}
+          </button>
+        )}
       </div>
 
       <PortTable
@@ -379,19 +399,23 @@ function Ports({
               {killConfirmPort.pid}) using port {killConfirmPort.port}?
             </p>
 
-            <p className="confirm-port-hint">
-              Type <strong>{killConfirmPort.port}</strong> to confirm:
-            </p>
-            <input
-              type="text"
-              inputMode="numeric"
-              autoComplete="off"
-              className={`confirm-port-input ${killTypeConfirm && !confirmTextMatches ? 'invalid' : ''}`}
-              placeholder={String(killConfirmPort.port)}
-              value={killTypeConfirm}
-              onChange={(e) => setKillTypeConfirm(e.target.value.replace(/\s/g, ''))}
-              aria-invalid={killTypeConfirm !== '' && !confirmTextMatches}
-            />
+            {settings.confirmByTyping && (
+              <>
+                <p className="confirm-port-hint">
+                  Type <strong>{killConfirmPort.port}</strong> to confirm:
+                </p>
+                <input
+                  type="text"
+                  inputMode="numeric"
+                  autoComplete="off"
+                  className={`confirm-port-input ${killTypeConfirm && !confirmTextMatches ? 'invalid' : ''}`}
+                  placeholder={String(killConfirmPort.port)}
+                  value={killTypeConfirm}
+                  onChange={(e) => setKillTypeConfirm(e.target.value.replace(/\s/g, ''))}
+                  aria-invalid={killTypeConfirm !== '' && !confirmTextMatches}
+                />
+              </>
+            )}
 
             {killError && <div className="error-message">{killError}</div>}
 
@@ -450,18 +474,22 @@ function Ports({
                 </li>
               ))}
             </ul>
-            <p className="confirm-port-hint">
-              Type <strong>{BULK_CONFIRM_TEXT}</strong> to confirm:
-            </p>
-            <input
-              type="text"
-              autoComplete="off"
-              className={`confirm-port-input ${bulkTypeConfirm && !bulkConfirmMatches ? 'invalid' : ''}`}
-              placeholder={BULK_CONFIRM_TEXT}
-              value={bulkTypeConfirm}
-              onChange={(e) => setBulkTypeConfirm(e.target.value.replace(/\s/g, ''))}
-              aria-invalid={bulkTypeConfirm !== '' && !bulkConfirmMatches}
-            />
+            {settings.confirmByTyping && (
+              <>
+                <p className="confirm-port-hint">
+                  Type <strong>{BULK_CONFIRM_TEXT}</strong> to confirm:
+                </p>
+                <input
+                  type="text"
+                  autoComplete="off"
+                  className={`confirm-port-input ${bulkTypeConfirm && !bulkConfirmMatches ? 'invalid' : ''}`}
+                  placeholder={BULK_CONFIRM_TEXT}
+                  value={bulkTypeConfirm}
+                  onChange={(e) => setBulkTypeConfirm(e.target.value.replace(/\s/g, ''))}
+                  aria-invalid={bulkTypeConfirm !== '' && !bulkConfirmMatches}
+                />
+              </>
+            )}
             {killError && <div className="error-message">{killError}</div>}
             <div className="modal-actions">
               <button

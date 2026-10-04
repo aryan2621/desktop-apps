@@ -1,9 +1,9 @@
 import { useState, useEffect, useCallback, useMemo, useRef } from 'react'
 import { listen } from '@tauri-apps/api/event'
-import { Moon, Sun } from 'lucide-react'
-import Sidebar from './components/Sidebar'
+import { Toaster } from 'sonner'
+import { Moon, Settings as SettingsIcon, Sun } from 'lucide-react'
 import Ports from './pages/Ports'
-import Settings from './pages/Settings'
+import SettingsDialog from './components/SettingsDialog'
 import { SettingsProvider } from './settings/SettingsProvider'
 import { useSettings } from './settings/settings-context'
 import { createPortmanApi, getAutostartFromOs } from './api/portman'
@@ -14,7 +14,7 @@ function AppShell() {
   const { settings, updateSetting } = useSettings()
   const api = useMemo(() => createPortmanApi(), [])
 
-  const [activePage, setActivePage] = useState('ports')
+  const [settingsOpen, setSettingsOpen] = useState(false)
   const [isLive, setIsLive] = useState(true)
   const [ports, setPorts] = useState<Port[]>([])
   const [loading, setLoading] = useState(true)
@@ -95,6 +95,18 @@ function AppShell() {
     }
   }, [refreshPorts])
 
+  // ⌘, (Ctrl+, elsewhere) opens Settings, as in other apps.
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === ',' && (e.metaKey || e.ctrlKey)) {
+        e.preventDefault()
+        setSettingsOpen(true)
+      }
+    }
+    document.addEventListener('keydown', onKey)
+    return () => document.removeEventListener('keydown', onKey)
+  }, [])
+
   const handleKillPid = async (
     pid: number,
     opts?: { dryRun?: boolean; port?: number },
@@ -128,6 +140,15 @@ function AppShell() {
         <button
           type="button"
           className="titlebar-theme-btn no-drag"
+          aria-label="Settings"
+          title="Settings (⌘,)"
+          onClick={() => setSettingsOpen(true)}
+        >
+          <SettingsIcon size={16} />
+        </button>
+        <button
+          type="button"
+          className="titlebar-theme-btn no-drag"
           aria-label={settings.theme === 'dark' ? 'Switch to light' : 'Switch to dark'}
           title={settings.theme === 'dark' ? 'Switch to light' : 'Switch to dark'}
           onClick={() => updateSetting('theme', settings.theme === 'dark' ? 'light' : 'dark')}
@@ -136,22 +157,21 @@ function AppShell() {
         </button>
       </header>
       <div className="app-body">
-        <Sidebar activePage={activePage} onNavigate={setActivePage} />
         <main className="main-content">
-          {activePage === 'ports' && (
-            <Ports
-              ports={ports}
-              loading={loading}
-              isLive={isLive}
-              onToggleLive={() => setIsLive(!isLive)}
-              onKillPid={handleKillPid}
-              onRefresh={refreshPorts}
-              changedKeys={changedKeys}
-            />
-          )}
-          {activePage === 'settings' && <Settings />}
+          <Ports
+            ports={ports}
+            loading={loading}
+            isLive={isLive}
+            onToggleLive={() => setIsLive(!isLive)}
+            onKillPid={handleKillPid}
+            onRefresh={refreshPorts}
+            changedKeys={changedKeys}
+          />
         </main>
       </div>
+      <SettingsDialog isOpen={settingsOpen} onClose={() => setSettingsOpen(false)} />
+      {/* What each action did (copied, opened, stopped…), bottom right. */}
+      <Toaster theme={settings.theme} position="bottom-right" className="portman-toaster" />
     </div>
   )
 }

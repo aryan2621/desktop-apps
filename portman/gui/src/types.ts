@@ -61,4 +61,10 @@ export interface PortmanSettings {
   refreshInterval: number
   accentColor: string
   startupOnLogin: boolean
+  /** Leave out ports the operating system itself holds (see portKinds.ts). */
+  hideSystem: boolean
+  /** Which ports the list shows when PortMan opens. */
+  defaultFilter: 'ALL' | 'LISTEN'
+  /** Ask for the port number (or KILL) to be typed before killing. */
+  confirmByTyping: boolean
 }

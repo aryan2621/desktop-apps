@@ -1,8 +1,12 @@
 import { useEffect, useRef, useState } from 'react'
 import { useVirtualizer } from '@tanstack/react-virtual'
-import { Trash2, Info, ChevronDown, ChevronUp, Network, Copy, Clipboard } from 'lucide-react'
+import { Trash2, Info, ChevronDown, ChevronUp, Network, Copy, Clipboard, ExternalLink } from 'lucide-react'
+import { open } from '@tauri-apps/api/shell'
+import { toast } from 'sonner'
 import { stablePortRowKey, type Port } from '../types'
 import Badge, { stateBadgeVariant } from './Badge'
+import { browserUrl, hostLabel } from '../portKinds'
+import { isTauriRuntime } from '../api/portman'
 
 interface PortTableProps {
   ports: Port[]
@@ -80,7 +84,23 @@ function PortTable({
   }
 
   const copyText = (text: string) => {
-    void navigator.clipboard.writeText(text).catch(() => {})
+    navigator.clipboard.writeText(text).then(
+      () => toast.success(`Copied ${text}`),
+      (err) => toast.error(`Couldn't copy: ${String(err)}`),
+    )
+  }
+
+  const openInBrowser = (url: string) => {
+    const shown = url.replace(/^https?:\/\//, '')
+    if (!isTauriRuntime()) {
+      window.open(url, '_blank', 'noopener')
+      toast.success(`Opening ${shown} in your browser`)
+      return
+    }
+    open(url).then(
+      () => toast.success(`Opening ${shown} in your browser`),
+      (err) => toast.error(`Couldn't open ${shown}: ${String(err)}`),
+    )
   }
 
   const SortIcon = ({ column }: { column: SortKey }) => {
@@ -133,19 +153,20 @@ function PortTable({
         <button type="button" className="port-th sortable no-drag" onClick={() => handleSort('port')}>
           Port <SortIcon column="port" />
         </button>
-        <span className="port-th">Protocol</span>
+        <button type="button" className="port-th sortable no-drag" onClick={() => handleSort('process_name')}>
+          Process <SortIcon column="process_name" />
+        </button>
         <button type="button" className="port-th sortable no-drag" onClick={() => handleSort('state')}>
           State <SortIcon column="state" />
         </button>
         <button type="button" className="port-th sortable no-drag" onClick={() => handleSort('pid')}>
           PID <SortIcon column="pid" />
         </button>
-        <button type="button" className="port-th sortable no-drag" onClick={() => handleSort('process_name')}>
-          Process <SortIcon column="process_name" />
-        </button>
         <span className="port-th">Service</span>
-        <span className="port-th">Address</span>
-        <span className="port-th actions-th">Actions</span>
+        <span className="port-th" title="Who can connect: localhost (this Mac only), all (any network), or one address">
+          Host
+        </span>
+        <span className="port-th actions-th" aria-label="Actions" />
       </div>
 
       {onBulkKill && bulkTargets.length > 0 && (
@@ -170,6 +191,7 @@ function PortTable({
             const port = sortedPorts[vi.index]
             const rk = stablePortRowKey(port)
             const dirty = changedKeys?.has(rk)
+            const url = browserUrl(port)
             return (
               <div
                 key={rk}
@@ -190,17 +212,12 @@ function PortTable({
                     onChange={() => toggleSelection(port)}
                   />
                 </div>
-                <span className="font-mono port-number">{port.port}</span>
-                <span>{port.protocol}</span>
-                <span>
-                  <Badge
-                    variant={stateBadgeVariant(port.state)}
-                    pulse={port.state.toUpperCase() === 'LISTEN'}
-                  >
-                    {port.state}
-                  </Badge>
+                <span className="font-mono port-number">
+                  {port.port}
+                  {port.protocol.toUpperCase() !== 'TCP' && (
+                    <span className="protocol-tag">{port.protocol}</span>
+                  )}
                 </span>
-                <span className="font-mono">{port.pid ?? '-'}</span>
                 <span className="process-name" title={port.cmdline_preview ?? undefined}>
                   {port.process_name ?? 'Unknown'}
                   {port.container_hint && (
@@ -208,15 +225,21 @@ function PortTable({
                   )}
                 </span>
                 <span>
+                  <Badge variant={stateBadgeVariant(port.state)}>{port.state}</Badge>
+                </span>
+                <span className="font-mono muted-cell">{port.pid ?? '-'}</span>
+                <span>
                   {port.service_tag && (
                     <span className="service-tag">{port.service_tag}</span>
                   )}
                 </span>
-                <span className="font-mono address">{port.local_address}</span>
+                <span className="font-mono address muted-cell" title={port.local_address}>
+                  {hostLabel(port.local_address)}
+                </span>
                 <div className="actions">
                   <button
                     type="button"
-                    className="btn-icon info no-drag"
+                    className="btn-icon info secondary-action no-drag"
                     onClick={() => copyText(port.local_address)}
                     title="Copy address"
                   >
@@ -224,7 +247,7 @@ function PortTable({
                   </button>
                   <button
                     type="button"
-                    className="btn-icon info no-drag"
+                    className="btn-icon info secondary-action no-drag"
                     onClick={() => port.pid && copyText(String(port.pid))}
                     title="Copy PID"
                     disabled={!port.pid}
@@ -233,12 +256,22 @@ function PortTable({
                   </button>
                   <button
                     type="button"
-                    className="btn-icon info no-drag"
+                    className="btn-icon info secondary-action no-drag"
                     onClick={() => onInfo(port)}
                     title="Info"
                   >
                     <Info size={16} />
                   </button>
+                  {url && (
+                    <button
+                      type="button"
+                      className="btn-icon info no-drag"
+                      onClick={() => openInBrowser(url)}
+                      title={`Open ${url.replace(/^https?:\/\//, '')} in the browser`}
+                    >
+                      <ExternalLink size={16} />
+                    </button>
+                  )}
                   <button
                     type="button"
                     className="btn-icon danger no-drag"
