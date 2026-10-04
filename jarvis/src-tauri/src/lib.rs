@@ -400,9 +400,13 @@ impl Core {
                         mlog!("interrupted");
                         self.interrupt();
                     }
-                    if self.start_recording() {
-                        self.start_hold_widget();
-                    }
+                    // Not waiting for the mic here: see `open_mic`.
+                    let opened = self.open_mic();
+                    self.start_hold_widget();
+                    let core = self.clone();
+                    std::thread::spawn(move || {
+                        core.mic_opened(opened.recv().unwrap_or_else(|e| Err(anyhow::anyhow!("{e}"))));
+                    });
                 } else if phase == Phase::Loading {
                     self.emit("error", Some("Still loading…".into()), None);
                     self.show_widget();
@@ -461,8 +465,16 @@ impl Core {
         }
     }
 
-    /// Opens the mic. In conversation mode the level meter also watches for the end of speech.
+    /// Opens the mic and waits until it is. In conversation mode the level meter also watches
+    /// for the end of speech.
     fn start_recording(self: &Arc<Self>) -> bool {
+        let opened = self.open_mic();
+        self.mic_opened(opened.recv().unwrap_or_else(|e| Err(anyhow::anyhow!("{e}"))))
+    }
+
+    /// Starts opening the mic and returns at once with where the outcome will arrive. The
+    /// hotkey's thread uses this so it's free to see a quick tap's release when it happens.
+    fn open_mic(self: &Arc<Self>) -> std::sync::mpsc::Receiver<anyhow::Result<()>> {
         self.set_phase(Phase::Recording);
         {
             let mut vad = self.vad.lock().unwrap();
@@ -475,10 +487,13 @@ impl Core {
                 core.on_level(level);
             }
         });
-        if let Err(e) = {
-            let cfg = self.cfg();
-            self.recorder.start(cfg.input_device, cfg.echo_cancellation, on_level)
-        } {
+        let cfg = self.cfg();
+        self.recorder.start_async(cfg.input_device, on_level)
+    }
+
+    /// The mic has opened, or couldn't. True when recording.
+    fn mic_opened(self: &Arc<Self>, result: anyhow::Result<()>) -> bool {
+        if let Err(e) = result {
             self.set_phase(Phase::Idle);
             self.in_conversation.store(false, Ordering::SeqCst);
             self.fail(&format!("Mic error: {e}"));
@@ -1101,7 +1116,7 @@ impl Core {
                 let _ = tx.send(heard);
             }
         });
-        let listening = self.recorder.start(cfg.input_device.clone(), cfg.echo_cancellation, on_level).is_ok();
+        let listening = self.recorder.start(cfg.input_device.clone(), on_level).is_ok();
         let started = Instant::now();
         let heard = loop {
             if let Ok(yes) = buttons.try_recv() {

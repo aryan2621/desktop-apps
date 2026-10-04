@@ -7,7 +7,6 @@ export interface Config {
   whisper_model: string;
   language: string;
   input_device: string | null;
-  echo_cancellation: boolean;
   /** "builtin" (the AI bundled with Jarvis) or "ollama". */
   brain: "builtin" | "ollama";
   /** Which built-in model: "8b" (default) or "4b" (lighter). */
