@@ -11,6 +11,9 @@
     "build:core": "bash ../scripts/build-core.sh"
   },
   "dependencies": {
+    "@fontsource-variable/inter": "5.3.0",
+    "@fontsource-variable/jetbrains-mono": "5.3.0",
+    "@fontsource-variable/source-serif-4": "5.3.0",
     "@tanstack/react-virtual": "^3.11.2",
     "@tauri-apps/api": "^1.5.0",
     "lucide-react": "^0.294.0",

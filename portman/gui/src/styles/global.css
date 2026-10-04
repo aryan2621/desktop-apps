@@ -1,45 +1,69 @@
-/* PortMan Global Styles — slate tokens aligned with MCP Monitor */
+/* PortMan's look follows Claude Desktop: warm paper tones, a clay accent, serif headings.
+   Same palette as Murmur and Relay. */
+
+:root {
+  --sans: 'Inter Variable', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+  --serif: 'Source Serif 4 Variable', Georgia, serif;
+  --mono: 'JetBrains Mono Variable', ui-monospace, Menlo, monospace;
+  --sidebar-width: 220px;
+  --radius-md: 8px;
+  --radius-lg: 12px;
+}
 
 :root,
 [data-theme='dark'] {
   color-scheme: dark;
-  --primary: #f8fafc;
-  --primary-fg: #0f172a;
-  --secondary: #1e293b;
-  --danger: #ef4444;
-  --warning: #f59e0b;
-  --success: #22c55e;
-  --bg-dark: #020817;
-  --surface-dark: #020817;
-  --card-dark: #020817;
-  --border-subtle: #1e293b;
-  --text-primary: #f8fafc;
-  --text-muted: #94a3b8;
-  --muted: #1e293b;
-  --sidebar-width: 220px;
-  --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.1);
-  --shadow-md: 0 1px 3px rgba(0, 0, 0, 0.1), 0 1px 2px -1px rgba(0, 0, 0, 0.1);
-  --radius-md: 8px;
-  --radius-lg: 8px;
+  /* Accent (clay) */
+  --primary: #d97757;
+  --primary-hover: #e3896b;
+  --primary-fg: #ffffff;
+  --accent-soft: #46302a;
+  --secondary: #d97757;
+  /* Status */
+  --danger: #ec8a80;
+  --danger-solid: #c4554a;
+  --warning: #e0b45c;
+  --success: #8fc18a;
+  /* Surfaces: window chrome, page, cards */
+  --bg-dark: #1f1e1d;
+  --surface-dark: #262624;
+  --card-dark: #30302e;
+  --muted: #3a3936;
+  --border-subtle: #3d3c38;
+  --border-strong: #4c4b46;
+  --text-primary: #f5f4ef;
+  --text-muted: #c2c0b6;
+  --focus: rgba(217, 119, 87, 0.45);
+  --backdrop: rgba(0, 0, 0, 0.5);
+  --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.25);
+  --shadow-md: 0 1px 2px rgba(0, 0, 0, 0.25), 0 6px 20px rgba(0, 0, 0, 0.2);
+  --shadow-menu: 0 10px 28px rgba(0, 0, 0, 0.35);
 }
 
 [data-theme='light'] {
   color-scheme: light;
-  --primary: #0f172a;
-  --primary-fg: #f8fafc;
-  --secondary: #f1f5f9;
-  --danger: #ef4444;
-  --warning: #d97706;
-  --success: #16a34a;
-  --bg-dark: #ffffff;
-  --surface-dark: #ffffff;
+  --primary: #c96442;
+  --primary-hover: #b4583a;
+  --primary-fg: #ffffff;
+  --accent-soft: #f5e6de;
+  --secondary: #c96442;
+  --danger: #b53333;
+  --danger-solid: #b53333;
+  --warning: #a86b16;
+  --success: #3f7d53;
+  --bg-dark: #f5f4ed;
+  --surface-dark: #faf9f5;
   --card-dark: #ffffff;
-  --border-subtle: #e2e8f0;
-  --text-primary: #020817;
-  --text-muted: #64748b;
-  --muted: #f1f5f9;
-  --shadow-sm: 0 1px 2px rgba(15, 23, 42, 0.06);
-  --shadow-md: 0 1px 3px rgba(15, 23, 42, 0.08), 0 1px 2px -1px rgba(15, 23, 42, 0.06);
+  --muted: #f0eee6;
+  --border-subtle: #e8e6dc;
+  --border-strong: #d6d3c6;
+  --text-primary: #1f1e1d;
+  --text-muted: #5e5d59;
+  --focus: rgba(201, 100, 66, 0.35);
+  --backdrop: rgba(31, 30, 29, 0.32);
+  --shadow-sm: 0 1px 2px rgba(31, 30, 29, 0.04);
+  --shadow-md: 0 1px 2px rgba(31, 30, 29, 0.04), 0 6px 20px rgba(31, 30, 29, 0.05);
+  --shadow-menu: 0 10px 28px rgba(31, 30, 29, 0.12);
 }
 
 * {
@@ -55,22 +79,30 @@ body,
 }
 
 body {
-  font-family:
-    'Inter',
-    ui-sans-serif,
-    system-ui,
-    -apple-system,
-    BlinkMacSystemFont,
-    'Segoe UI',
-    sans-serif;
+  font-family: var(--sans);
   font-size: 14px;
+  line-height: 1.5;
+  font-synthesis: none;
+  -webkit-font-smoothing: antialiased;
   background-color: var(--bg-dark);
   color: var(--text-primary);
   overflow: hidden;
 }
 
 .font-mono {
-  font-family: 'JetBrains Mono', monospace;
+  font-family: var(--mono);
+}
+
+button,
+input,
+select,
+textarea {
+  font-family: inherit;
+}
+
+:focus-visible {
+  outline: 3px solid var(--focus);
+  outline-offset: 1px;
 }
 
 /* App Layout */
@@ -109,9 +141,10 @@ body {
 }
 
 .titlebar-title {
-  font-size: 14px;
-  font-weight: 600;
-  letter-spacing: -0.02em;
+  font-family: var(--serif);
+  font-size: 17px;
+  font-weight: 500;
+  letter-spacing: -0.01em;
   color: var(--text-primary);
 }
 
@@ -124,14 +157,15 @@ body {
   height: 32px;
   margin-left: auto;
   border: 1px solid var(--border-subtle);
-  border-radius: 6px;
+  border-radius: 8px;
   background: transparent;
-  color: var(--text-primary);
+  color: var(--text-muted);
   cursor: pointer;
 }
 
 .titlebar-theme-btn:hover {
   background: var(--muted);
+  color: var(--text-primary);
 }
 
 .no-drag {
@@ -179,16 +213,16 @@ body {
 
 .sidebar-nav {
   flex: 1;
-  padding: 0 12px;
+  padding: 0 10px;
 }
 
 .nav-item {
   display: flex;
   align-items: center;
-  gap: 12px;
+  gap: 10px;
   width: 100%;
-  padding: 12px 16px;
-  margin-bottom: 4px;
+  padding: 8px 12px;
+  margin-bottom: 2px;
   border: none;
   border-radius: 8px;
   background: transparent;
@@ -238,9 +272,10 @@ body {
 }
 
 .page-header h1 {
+  font-family: var(--serif);
   font-size: 30px;
-  font-weight: 700;
-  letter-spacing: -0.04em;
+  font-weight: 500;
+  letter-spacing: -0.01em;
   margin-bottom: 6px;
   line-height: 1.15;
 }
@@ -273,10 +308,11 @@ body {
 }
 
 .stat-chip strong {
+  font-family: var(--serif);
   font-size: 24px;
-  font-weight: 700;
+  font-weight: 500;
   font-variant-numeric: tabular-nums;
-  letter-spacing: -0.03em;
+  letter-spacing: -0.01em;
   color: var(--text-primary);
 }
 
@@ -329,8 +365,8 @@ body {
 }
 
 .search-bar:focus-within {
-  border-color: var(--text-primary);
-  box-shadow: 0 0 0 2px color-mix(in srgb, var(--text-primary) 20%, transparent);
+  border-color: var(--primary);
+  box-shadow: 0 0 0 3px var(--focus);
 }
 
 .search-icon {
@@ -362,12 +398,12 @@ body {
   display: flex;
   align-items: center;
   gap: 6px;
-  padding: 8px 16px;
-  border-radius: 6px;
+  padding: 6px 14px;
+  border-radius: 999px;
   border: 1px solid var(--border-subtle);
   background: transparent;
   color: var(--text-muted);
-  font-size: 14px;
+  font-size: 13px;
   font-weight: 500;
   cursor: pointer;
   transition: background 0.15s ease, color 0.15s ease, border-color 0.15s ease;
@@ -380,9 +416,9 @@ body {
 }
 
 .filter-pill.active {
-  background: var(--primary);
+  background: var(--accent-soft);
   border-color: transparent;
-  color: var(--primary-fg);
+  color: var(--primary);
 }
 
 /* Port Table */
@@ -518,10 +554,10 @@ body {
   display: flex;
   align-items: center;
   gap: 8px;
-  padding: 8px 16px;
-  border-radius: 6px;
-  border: 1px solid var(--border-subtle);
-  background: transparent;
+  padding: 7px 14px;
+  border-radius: 8px;
+  border: 1px solid var(--border-strong);
+  background: var(--card-dark);
   color: var(--text-muted);
   font-size: 14px;
   font-weight: 500;
@@ -593,8 +629,8 @@ body {
 }
 
 .badge.info {
-  background: var(--muted);
-  color: var(--text-primary);
+  background: var(--accent-soft);
+  color: var(--primary);
 }
 
 @keyframes badge-pulse {
@@ -634,12 +670,11 @@ body {
 .modal-overlay {
   position: fixed;
   inset: 0;
-  background: rgba(0, 0, 0, 0.7);
+  background: var(--backdrop);
   display: flex;
   align-items: center;
   justify-content: center;
   z-index: 1000;
-  backdrop-filter: blur(4px);
 }
 
 .modal {
@@ -676,8 +711,10 @@ body {
 }
 
 .modal-header h3 {
-  font-size: 16px;
-  font-weight: 600;
+  font-family: var(--serif);
+  font-size: 19px;
+  font-weight: 500;
+  letter-spacing: -0.01em;
 }
 
 .modal-close {
@@ -734,7 +771,7 @@ body {
 }
 
 .port-info .service-tag {
-  color: var(--secondary);
+  color: var(--primary);
   font-weight: 500;
 }
 
@@ -764,13 +801,16 @@ body {
   display: inline-flex;
   align-items: center;
   gap: 8px;
-  padding: 8px 16px;
-  border-radius: 6px;
-  border: none;
+  justify-content: center;
+  height: 34px;
+  padding: 0 14px;
+  border-radius: 8px;
+  border: 1px solid transparent;
   font-size: 14px;
   font-weight: 500;
+  white-space: nowrap;
   cursor: pointer;
-  transition: background 0.15s ease, color 0.15s ease, opacity 0.15s ease;
+  transition: background 0.15s ease, color 0.15s ease, border-color 0.15s ease;
 }
 
 .btn.primary {
@@ -780,12 +820,13 @@ body {
 }
 
 .btn.primary:hover {
-  opacity: 0.9;
+  background: var(--primary-hover);
+  border-color: var(--primary-hover);
 }
 
 .btn.secondary {
-  background: transparent;
-  border: 1px solid var(--border-subtle);
+  background: var(--card-dark);
+  border: 1px solid var(--border-strong);
   color: var(--text-primary);
 }
 
@@ -794,7 +835,8 @@ body {
 }
 
 .btn.danger {
-  background: var(--danger);
+  background: var(--danger-solid);
+  border-color: var(--danger-solid);
   color: #fff;
 }
 
@@ -969,9 +1011,10 @@ body {
 }
 
 .settings-header h3 {
-  font-size: 16px;
-  font-weight: 700;
-  letter-spacing: -0.02em;
+  font-family: var(--serif);
+  font-size: 18px;
+  font-weight: 500;
+  letter-spacing: -0.01em;
 }
 
 .setting-row {
@@ -1136,8 +1179,9 @@ body {
 }
 
 .theme-toggle button.active {
-  background: var(--primary);
-  color: var(--primary-fg);
+  background: var(--card-dark);
+  color: var(--text-primary);
+  box-shadow: var(--shadow-sm);
 }
 
 /* Color Swatches */
@@ -1189,7 +1233,7 @@ body {
   padding: 8px 12px;
   background: var(--surface-dark);
   border: 1px solid var(--border-subtle);
-  border-radius: 6px;
+  border-radius: 8px;
   color: var(--text-primary);
   font-size: 13px;
   cursor: pointer;
@@ -1198,7 +1242,7 @@ body {
 }
 
 .custom-select-trigger:hover {
-  border-color: var(--text-muted);
+  border-color: var(--border-strong);
 }
 
 .custom-select.open .custom-select-trigger {
@@ -1227,11 +1271,7 @@ body {
   background: var(--card-dark);
   border: 1px solid var(--border-subtle);
   border-radius: 8px;
-  box-shadow: 0 10px 28px rgba(0, 0, 0, 0.35);
-}
-
-[data-theme='light'] .custom-select-menu {
-  box-shadow: 0 10px 28px rgba(15, 15, 40, 0.12);
+  box-shadow: var(--shadow-menu);
 }
 
 .custom-select-option {
@@ -1304,16 +1344,16 @@ body {
 }
 
 .port-table-scroll::-webkit-scrollbar-thumb {
-  background: var(--text-muted);
+  background: var(--border-strong);
   border-radius: 8px;
 }
 
 .port-table-scroll::-webkit-scrollbar-thumb:hover {
-  background: var(--text-primary);
+  background: var(--text-muted);
 }
 
 .port-table-scroll:focus-visible {
-  box-shadow: inset 0 0 0 2px var(--text-primary);
+  box-shadow: inset 0 0 0 2px var(--focus);
 }
 
 .port-table-grid-row {
@@ -1393,8 +1433,9 @@ body {
 }
 
 .btn-sm {
-  padding: 6px 12px;
-  font-size: 12px;
+  height: 29px;
+  padding: 0 10px;
+  font-size: 13px;
   border-radius: 8px;
 }
 
@@ -1438,6 +1479,12 @@ body {
   font-family: inherit;
 }
 
+.confirm-port-input:focus {
+  outline: none;
+  border-color: var(--primary);
+  box-shadow: 0 0 0 3px var(--focus);
+}
+
 .confirm-port-input.invalid {
   border-color: var(--danger);
 }
@@ -1466,7 +1513,7 @@ body {
 }
 
 .cmdline-preview {
-  font-family: ui-monospace, 'JetBrains Mono', monospace;
+  font-family: var(--mono);
   font-size: 12px;
   word-break: break-all;
   overflow-wrap: anywhere;
