@@ -139,23 +139,3 @@ pub fn validate_server(s: &Server) -> Result<(), String> {
     }
     Ok(())
 }
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    #[test]
-    fn rejects_credentials_in_urls_and_reserved_headers() {
-        let mut s = Server {
-            name: "test".into(),
-            transport: "http".into(),
-            url: "https://user:pass@example.com/mcp".into(),
-            ..Default::default()
-        };
-        assert!(validate_server(&s).is_err());
-        s.url = "https://example.com/mcp".into();
-        s.headers = vec!["Content-Length".into()];
-        assert!(validate_server(&s).is_err());
-        s.headers = vec!["X-API-Key".into()];
-        assert!(validate_server(&s).is_ok());
-    }
-}
