@@ -1,4 +1,7 @@
 @import "tailwindcss";
+@import "@fontsource-variable/inter";
+@import "@fontsource-variable/source-serif-4";
+@import "@fontsource-variable/jetbrains-mono";
 
 /*
  * Design tokens. Dark is the default; light applies with data-theme="light" on <html>, which
@@ -8,32 +11,33 @@
  */
 :root {
   color-scheme: dark;
-  --bg: #0b0b0f;
-  --panel: #131319;
-  --panel-2: #1b1b23;
-  --raised: #24242e;
-  --stage: #08080b;
-  --line: #262631;
-  --line-strong: #363643;
-  --fg: #ececf1;
-  --muted: #9a9aab;
-  --subtle: #6d6d7e;
-  --accent: #7c5cff;
-  --accent-hover: #6a48f5;
+  /* Claude Desktop's warm dark palette (same as Murmur, Relay and PortMan). */
+  --bg: #1f1e1d;
+  --panel: #262624;
+  --panel-2: #30302e;
+  --raised: #3a3936;
+  --stage: #171615;
+  --line: #3d3c38;
+  --line-strong: #4c4b46;
+  --fg: #f5f4ef;
+  --muted: #c2c0b6;
+  --subtle: #96948c;
+  --accent: #d97757;
+  --accent-hover: #c96442;
   --accent-fg: #ffffff;
   --record: #ef4444;
   --record-hover: #dc2626;
   /* Status colours: a solid tone, a soft background and a readable text tone. */
   --danger: #ef4444;
-  --danger-soft: rgb(239 68 68 / 0.12);
-  --danger-fg: #fca5a5;
+  --danger-soft: rgb(236 138 128 / 0.14);
+  --danger-fg: #ec8a80;
   --warning: #f59e0b;
-  --warning-soft: rgb(245 158 11 / 0.12);
-  --warning-fg: #fcd34d;
+  --warning-soft: rgb(224 180 92 / 0.14);
+  --warning-fg: #e0b45c;
   --success: #10b981;
-  --success-soft: rgb(16 185 129 / 0.12);
-  --success-fg: #6ee7b7;
-  /* Timeline lanes. */
+  --success-soft: rgb(143 193 138 / 0.14);
+  --success-fg: #8fc18a;
+  /* Timeline lanes: kept distinct so each kind of edit is easy to tell apart. */
   --lane-zoom: #7c5cff;
   --lane-text: #f59e0b;
   --lane-audio: #14b8a6;
@@ -41,37 +45,38 @@
   --lane-hide: #ec4899;
   --lane-caption: #38bdf8;
   --shadow-lg: 0 20px 50px -12px rgb(0 0 0 / 0.6);
-  --scrollbar: #2a2a36;
+  --scrollbar: #4c4b46;
 }
 
 :root[data-theme='light'] {
   color-scheme: light;
-  --bg: #f4f4f7;
+  /* Claude Desktop's paper palette. */
+  --bg: #f5f4ed;
   --panel: #ffffff;
-  --panel-2: #f1f1f5;
-  --raised: #e8e8ee;
-  --stage: #e6e6ec;
-  --line: #e2e2e9;
-  --line-strong: #cdcdd8;
-  --fg: #15151c;
-  --muted: #5d5d6c;
-  --subtle: #8b8b9a;
-  --accent: #6b4df2;
-  --accent-hover: #5a3ae0;
-  --danger-soft: rgb(239 68 68 / 0.1);
-  --danger-fg: #b91c1c;
-  --warning-soft: rgb(245 158 11 / 0.14);
-  --warning-fg: #92400e;
-  --success-soft: rgb(16 185 129 / 0.12);
-  --success-fg: #047857;
+  --panel-2: #f0eee6;
+  --raised: #e8e6dc;
+  --stage: #e8e6dc;
+  --line: #e8e6dc;
+  --line-strong: #d6d3c6;
+  --fg: #1f1e1d;
+  --muted: #5e5d59;
+  --subtle: #8a8880;
+  --accent: #c96442;
+  --accent-hover: #b4583a;
+  --danger-soft: rgb(181 51 51 / 0.1);
+  --danger-fg: #b53333;
+  --warning-soft: rgb(168 107 22 / 0.12);
+  --warning-fg: #8a5a12;
+  --success-soft: rgb(63 125 83 / 0.12);
+  --success-fg: #3f7d53;
   --lane-zoom: #6b4df2;
   --lane-text: #d97706;
   --lane-audio: #0d9488;
   --lane-cut: #ef4444;
   --lane-hide: #db2777;
   --lane-caption: #0284c7;
-  --shadow-lg: 0 20px 50px -16px rgb(20 20 40 / 0.25);
-  --scrollbar: #cdcdd8;
+  --shadow-lg: 0 20px 50px -16px rgb(31 30 29 / 0.22);
+  --scrollbar: #d6d3c6;
 }
 
 @theme inline {
@@ -106,8 +111,9 @@
   --color-lane-caption: var(--lane-caption);
   --color-lane-cut: var(--lane-cut);
   --shadow-panel: var(--shadow-lg);
-  --font-sans: -apple-system, BlinkMacSystemFont, "SF Pro Text", "Inter", system-ui, sans-serif;
-  --font-mono: ui-monospace, "SF Mono", Menlo, monospace;
+  --font-sans: "Inter Variable", -apple-system, BlinkMacSystemFont, system-ui, sans-serif;
+  --font-serif: "Source Serif 4 Variable", Georgia, serif;
+  --font-mono: "JetBrains Mono Variable", ui-monospace, Menlo, monospace;
 }
 
 html,
@@ -122,17 +128,22 @@ body {
   color: var(--fg);
   font-family: var(--font-sans);
   font-size: 14px;
+  line-height: 1.5;
+  font-synthesis: none;
   -webkit-font-smoothing: antialiased;
   user-select: none;
   -webkit-user-select: none;
 }
 
-input,
-select,
-button,
-textarea {
-  font: inherit;
-  color: inherit;
+/* In the base layer so Tailwind's text-* and font-* utilities on controls still apply. */
+@layer base {
+  input,
+  select,
+  button,
+  textarea {
+    font: inherit;
+    color: inherit;
+  }
 }
 
 :focus-visible {

@@ -82,10 +82,10 @@ export function MainWindow() {
     return (
         <div className='flex h-full flex-col'>
             <header className='flex h-14 shrink-0 items-center gap-3 border-b border-line bg-panel px-5'>
-                <span className='flex h-7 w-7 items-center justify-center rounded-lg bg-gradient-to-br from-accent to-pink-500 shadow-sm'>
+                <span className='flex h-7 w-7 items-center justify-center rounded-lg bg-accent shadow-sm'>
                     <span className='h-2.5 w-2.5 rounded-full bg-white' />
                 </span>
-                <span className='font-semibold tracking-tight'>Capturita</span>
+                <span className='font-serif text-[17px] font-medium tracking-tight'>Capturita</span>
                 <div className='ml-auto flex items-center gap-2'>
                     <IconButton label='Setup: permissions and caption model' onClick={() => setSetup('welcome')}>
                         <ListChecks className='h-4 w-4' />
@@ -104,7 +104,7 @@ export function MainWindow() {
                 </div>
                 <section className='flex min-w-0 flex-1 flex-col gap-4 overflow-y-auto'>
                     <div className='flex items-baseline gap-2'>
-                        <h2 className='text-lg font-semibold tracking-tight'>Recordings</h2>
+                        <h2 className='font-serif text-xl font-medium tracking-tight'>Recordings</h2>
                         {recordings.length > 0 && <span className='text-sm text-subtle'>{recordings.length}</span>}
                     </div>
                     <RecordingsList recordings={recordings} onOpen={setEditing} onDeleted={refreshRecordings} />

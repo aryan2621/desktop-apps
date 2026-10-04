@@ -192,7 +192,7 @@ export function ExportDialog({ project, edit, cursor, onClose }: { project: Proj
         <div className='fixed inset-0 z-50 flex items-center justify-center bg-black/70 p-6 backdrop-blur-sm' onClick={close}>
             <div className='w-full max-w-md space-y-5 rounded-2xl border border-line bg-panel p-6 shadow-panel' onClick={(e) => e.stopPropagation()}>
                 <div className='flex items-center justify-between'>
-                    <h2 className='flex items-center gap-2 font-medium'>
+                    <h2 className='flex items-center gap-2 font-serif text-lg font-medium'>
                         <Download className='h-4 w-4' /> Export
                     </h2>
                     <Button size='icon' variant='ghost' className='h-8 w-8' onClick={close} disabled={busy} title='Close' aria-label='Close'>

@@ -58,7 +58,7 @@ export function ShortcutsSheet({ onClose }: { onClose: () => void }) {
         <div className='fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-6 backdrop-blur-sm' onClick={onClose}>
             <div className='w-full max-w-2xl rounded-2xl border border-line bg-panel p-6 shadow-panel' onClick={(e) => e.stopPropagation()}>
                 <div className='mb-5 flex items-center justify-between'>
-                    <h2 className='flex items-center gap-2 font-medium'>
+                    <h2 className='flex items-center gap-2 font-serif text-lg font-medium'>
                         <Keyboard className='h-4 w-4' /> Keyboard shortcuts
                     </h2>
                     <IconButton label='Close' size='icon-sm' onClick={onClose}>
