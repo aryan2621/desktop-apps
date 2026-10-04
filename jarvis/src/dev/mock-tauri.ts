@@ -45,7 +45,7 @@ if (previewSetup) {
   }
 }
 let config: Config = {
-  hotkey: "right_option", whisper_model: "large-v3-turbo-q5_0", language: "en", input_device: null,
+  hotkey: "right_option", whisper_model: "large-v3-turbo-q5_0", language: "en", input_device: null, echo_cancellation: true,
   brain: "builtin", builtin_model: "8b", ollama_url: "http://localhost:11434", llm_model: "qwen3:8b", keep_alive: "30m", system_prompt: null,
   assistant_name: "Jarvis", voice: "Tara", speech_rate: 195, speak_replies: true, sounds: true,
   forget_after_minutes: 5, history_turns: 8, pause_seconds: 2, conversation_timeout_seconds: 20,

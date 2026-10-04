@@ -475,7 +475,10 @@ impl Core {
                 core.on_level(level);
             }
         });
-        if let Err(e) = self.recorder.start(self.cfg().input_device, on_level) {
+        if let Err(e) = {
+            let cfg = self.cfg();
+            self.recorder.start(cfg.input_device, cfg.echo_cancellation, on_level)
+        } {
             self.set_phase(Phase::Idle);
             self.in_conversation.store(false, Ordering::SeqCst);
             self.fail(&format!("Mic error: {e}"));
@@ -1098,7 +1101,7 @@ impl Core {
                 let _ = tx.send(heard);
             }
         });
-        let listening = self.recorder.start(cfg.input_device.clone(), on_level).is_ok();
+        let listening = self.recorder.start(cfg.input_device.clone(), cfg.echo_cancellation, on_level).is_ok();
         let started = Instant::now();
         let heard = loop {
             if let Ok(yes) = buttons.try_recv() {
@@ -1400,6 +1403,7 @@ fn show_without_focus(win: &WebviewWindow) {
 }
 
 fn hide_widget(win: &WebviewWindow) {
+    widget_drag::release(win.app_handle());
     if !panel::hide(win) {
         let _ = win.hide();
     }
@@ -1538,14 +1542,13 @@ pub fn run() {
             let history_item = MenuItem::with_id(app, "history", "History…", true, None::<&str>)?;
             let new_chat = MenuItem::with_id(app, "new", "New Conversation", true, Some("CmdOrCtrl+N"))?;
             let log = MenuItem::with_id(app, "log", "Open Log", true, None::<&str>)?;
-            let reset_widget = MenuItem::with_id(app, "reset_widget", "Reset Widget Position", true, None::<&str>)?;
             let login_enabled = app.autolaunch().is_enabled().unwrap_or(false);
             let login_item = CheckMenuItem::with_id(app, "login", "Start at Login", true, login_enabled, None::<&str>)?;
             let quit = MenuItem::with_id(app, "quit", "Quit Jarvis", true, Some("CmdOrCtrl+Q"))?;
             let sep = || PredefinedMenuItem::separator(app);
             let menu = Menu::with_items(
                 app,
-                &[&status, &sep()?, &open_item, &history_item, &new_chat, &sep()?, &reset_widget, &log, &login_item, &quit],
+                &[&status, &sep()?, &open_item, &history_item, &new_chat, &sep()?, &log, &login_item, &quit],
             )?;
 
             TrayIconBuilder::with_id("jarvis")
@@ -1560,7 +1563,6 @@ pub fn run() {
                     "open" => open_main_window(app, Some("home")),
                     "history" => open_main_window(app, Some("history")),
                     "log" => open_text_file(&config::log_path()),
-                    "reset_widget" => widget_drag::reset(app),
                     "login" => {
                         let autolaunch = app.autolaunch();
                         let enable = !autolaunch.is_enabled().unwrap_or(false);
@@ -1574,7 +1576,7 @@ pub fn run() {
                 })
                 .build(app)?;
 
-            app.manage(widget_drag::WidgetDrag::load());
+            app.manage(widget_drag::WidgetDrag::default());
             if let Some(w) = app.get_webview_window("widget") {
                 let _ = w.set_ignore_cursor_events(true);
                 if let Err(e) = panel::convert(&w) {

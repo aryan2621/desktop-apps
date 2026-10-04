@@ -32,8 +32,7 @@ fn app_name(said: &str) -> Option<&'static str> {
 
 /// The browser the user is looking at, or else one that is open.
 pub(super) fn active_browser() -> Option<&'static str> {
-    use objc2_app_kit::NSWorkspace;
-    let front = NSWorkspace::sharedWorkspace().frontmostApplication().and_then(|a| a.localizedName()).map(|n| n.to_string());
+    let front = screen::front_app_name();
     if front.as_deref() == Some("Firefox") {
         return Some("Firefox");
     }

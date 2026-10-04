@@ -92,6 +92,11 @@ Open it from the menu bar icon (**Open Jarvis…**), or launch Jarvis again from
 - **History** — every question and answer, searchable
 - **Settings** — everything below, saved automatically (voice picker has a ▶ preview)
 
+**Echo cancellation** (Settings → Microphone, on by default): with the System default microphone,
+Jarvis records through Apple's voice processing (the echo cancellation FaceTime uses), so music or
+a video playing from the Mac's speakers is removed from what it hears. It opens the mic about a
+quarter of a second slower; turn it off if the start of your first word gets clipped.
+
 ## Settings
 Stored in `~/Library/Application Support/Jarvis/config.json`.
 

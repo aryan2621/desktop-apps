@@ -38,6 +38,12 @@ pub(super) fn app_pid(name: &str) -> Option<(i32, String)> {
         .cloned()
 }
 
+/// The name of the app the user is working in, read live (see `front_window`).
+pub(super) fn front_app_name() -> Option<String> {
+    let pid = crate::front_window::active_pid()?;
+    objc2_app_kit::NSRunningApplication::runningApplicationWithProcessIdentifier(pid)?.localizedName().map(|n| n.to_string())
+}
+
 /// Apps with windows (not background helpers).
 pub(super) fn running_apps() -> Result<String> {
     use objc2_app_kit::{NSApplicationActivationPolicy, NSWorkspace};
@@ -51,7 +57,7 @@ pub(super) fn running_apps() -> Result<String> {
         .collect();
     names.sort();
     names.dedup();
-    let front = workspace.frontmostApplication().and_then(|a| a.localizedName()).map(|n| n.to_string()).unwrap_or_default();
+    let front = front_app_name().unwrap_or_default();
     Ok(format!("In front: {front}. Open apps: {}", names.join(", ")))
 }
 

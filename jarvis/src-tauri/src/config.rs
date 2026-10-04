@@ -15,6 +15,9 @@ pub struct Config {
     pub language: String,
     /// Microphone name; `None` follows the system default input.
     pub input_device: Option<String>,
+    /// Cancel out sound playing from the Mac's own speakers (music, videos) with Apple's voice
+    /// processing. Only with the system default microphone; opens the mic ~0.25 s slower.
+    pub echo_cancellation: bool,
     /// "builtin" (the AI bundled with Jarvis) or "ollama" (an Ollama the user runs themselves).
     pub brain: String,
     /// Which built-in model: "8b" (the default) or "4b", lighter (see `model::BRAINS`).
@@ -70,6 +73,7 @@ impl Default for Config {
             whisper_model: "large-v3-turbo-q5_0".into(),
             language: "en".into(),
             input_device: None,
+            echo_cancellation: true,
             brain: "builtin".into(),
             builtin_model: crate::model::BRAINS[0].id.into(),
             ollama_url: "http://localhost:11434".into(),
