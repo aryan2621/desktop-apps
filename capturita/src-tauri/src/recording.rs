@@ -303,8 +303,10 @@ fn project_dir(app: &AppHandle, id: &str) -> Result<PathBuf, String> {
 }
 
 #[tauri::command]
-pub fn delete_recording(app: AppHandle, id: String) -> Result<(), String> {
-    std::fs::remove_dir_all(project_dir(&app, &id)?).map_err(|e| e.to_string())
+pub async fn delete_recording(app: AppHandle, helper: State<'_, Helper>, id: String) -> Result<(), String> {
+    // To the Trash, not erased: Delete is one click, so it has to be recoverable.
+    let dir = project_dir(&app, &id)?;
+    helper.call(&app, "trash", json!({ "path": dir.to_string_lossy() }), Some(Duration::from_secs(30))).await.map(|_| ())
 }
 
 /// The editor's changes (edit.json), or nothing if the recording hasn't been edited yet.

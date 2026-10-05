@@ -283,13 +283,14 @@ function RecordingCard({ project, onOpen, onDeleted }: { project: Project; onOpe
     );
 }
 
-/** Show in Finder and Delete. Delete removes the recording straight away. */
+/** Show in Finder and Delete. Delete moves the recording to the Trash straight away (recoverable from Finder). */
 function RecordingMenu({ project, onDeleted }: { project: Project; onDeleted: () => void }) {
     const [deleting, setDeleting] = useState(false);
     const remove = async () => {
         setDeleting(true);
         try {
             await api.deleteRecording(project.id);
+            toast.success('Moved to the Trash', { description: 'Put it back from the Trash in Finder if you need it.' });
             onDeleted();
         } catch (error) {
             toast.error(errorMessage(error));
@@ -310,7 +311,7 @@ function RecordingMenu({ project, onDeleted }: { project: Project; onDeleted: ()
                 <FolderOpen className='h-3.5 w-3.5' />
             </IconButton>
             <IconButton
-                label='Delete recording'
+                label='Move to Trash'
                 size='icon-sm'
                 className='h-7 w-7 hover:bg-danger-soft hover:text-danger-fg'
                 disabled={deleting}
