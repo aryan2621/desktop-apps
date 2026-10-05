@@ -14,7 +14,18 @@ const POLL_MS = 1500;
  * First-run setup, shown over the main window: what Capturita does, the permissions it needs,
  * the optional caption model, and how to start recording. Can be reopened from the header.
  */
-export function SetupFlow({ initialStep, onClose, onPermissionsChange }: { initialStep: SetupStep; onClose: () => void; onPermissionsChange: (p: Permissions) => void }) {
+export function SetupFlow({
+    initialStep,
+    onClose,
+    onPermissionsChange,
+    onStartRecording,
+}: {
+    initialStep: SetupStep;
+    onClose: () => void;
+    onPermissionsChange: (p: Permissions) => void;
+    /** The last step's button: close setup and open the recorder. */
+    onStartRecording: () => void;
+}) {
     const [step, setStep] = useState<SetupStep>(initialStep);
     const index = SETUP_STEPS.indexOf(step);
     const next = () => setStep(SETUP_STEPS[Math.min(SETUP_STEPS.length - 1, index + 1)]);
@@ -46,7 +57,14 @@ export function SetupFlow({ initialStep, onClose, onPermissionsChange }: { initi
                     {step === 'welcome' && <Welcome onNext={next} />}
                     {step === 'permissions' && <PermissionsStep onNext={next} onPermissionsChange={onPermissionsChange} />}
                     {step === 'captions' && <CaptionsStep onNext={next} />}
-                    {step === 'done' && <Done onFinish={close} />}
+                    {step === 'done' && (
+                        <Done
+                            onFinish={() => {
+                                close();
+                                onStartRecording();
+                            }}
+                        />
+                    )}
                 </div>
             </div>
         </div>
@@ -282,14 +300,10 @@ function CaptionsStep({ onNext }: { onNext: () => void }) {
                         </Button>
                     ))}
             </div>
-            <div className='flex items-center justify-end gap-2'>
-                {!downloaded && progress === null && (
-                    <Button variant='ghost' onClick={onNext}>
-                        Skip for now
-                    </Button>
-                )}
-                <Button variant='primary' onClick={onNext} disabled={progress !== null || !downloaded}>
-                    Continue <ArrowRight className='h-4 w-4' />
+            <div className='flex items-center justify-end gap-3'>
+                {!downloaded && <span className='text-xs text-muted'>{progress !== null ? 'The download keeps going in the background.' : 'You can download it later in Settings.'}</span>}
+                <Button variant='primary' onClick={onNext}>
+                    {downloaded || progress !== null ? 'Continue' : 'Skip for now'} <ArrowRight className='h-4 w-4' />
                 </Button>
             </div>
         </div>
@@ -301,7 +315,7 @@ function Done({ onFinish }: { onFinish: () => void }) {
         <div className='space-y-5'>
             <div className='space-y-1'>
                 <h2 className='font-serif text-xl font-medium tracking-tight'>You're all set</h2>
-                <p className='text-sm text-muted'>Click New recording, pick a screen, window or area, and press Start recording.</p>
+                <p className='text-sm text-muted'>Pick a screen, window or area, and press Record. Capturita adds the zooms for you.</p>
             </div>
             <div className='flex items-center gap-3 rounded-xl border border-line bg-panel-2 p-3 text-sm'>
                 <Keyboard className='h-4 w-4 shrink-0 text-muted' />

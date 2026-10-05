@@ -2,14 +2,14 @@ import { useCallback, useEffect, useRef, useState, type ReactNode } from 'react'
 import { listen } from '@tauri-apps/api/event';
 import { getCurrentWindow } from '@tauri-apps/api/window';
 import { openPath } from '@tauri-apps/plugin-opener';
-import { FolderOpen, LayoutGrid, List, MousePointerClick, Plus, Settings } from 'lucide-react';
+import { FolderOpen, LayoutGrid, List, Plus, Settings } from 'lucide-react';
 import { toast } from 'sonner';
 import { api, errorMessage, type Permissions, type Project } from '../lib/api';
 import { PermissionsBanner } from '../components/PermissionsBanner';
 import { SetupFlow } from '../components/SetupFlow';
 import { resumeStep, setResumeStep, setupDone, type SetupStep } from '../lib/setup';
 import { RecorderPanel } from '../components/RecorderPanel';
-import { EmptyLibrary, LibraryHeader, RecordingDetails, RecordingsList, type LibraryView } from '../components/RecordingsList';
+import { EmptyLibrary, LibraryHeader, RecordingsList, type LibraryView } from '../components/RecordingsList';
 import { EditorView } from './EditorView';
 import { Button, IconButton, Segmented } from '../components/ui';
 import { SettingsDialog } from '../components/SettingsDialog';
@@ -36,8 +36,6 @@ export function MainWindow() {
     const [settingsOpen, setSettingsOpen] = useState(false);
     const [recorderOpen, setRecorderOpen] = useState(false);
     const [view, setView] = useState<LibraryView>(loadView);
-    const [selectedId, setSelectedId] = useState<string | null>(null);
-    const selected = recordings.find((r) => r.id === selectedId) ?? recordings[0] ?? null;
     const changeView = (next: LibraryView) => {
         setView(next);
         try {
@@ -71,7 +69,6 @@ export function MainWindow() {
             }),
             listen<Project>('recording-finished', (event) => {
                 setRecorderOpen(false);
-                setSelectedId(event.payload.id);
                 toast.success('Recording saved');
                 pendingWarnings.current.splice(0).forEach((message) => toast.warning(message));
                 refreshRecordings();
@@ -156,35 +153,23 @@ export function MainWindow() {
                         <EmptyLibrary onNew={() => setRecorderOpen(true)} />
                     </section>
                 ) : (
-                    <div className='flex min-h-0 flex-1 gap-6'>
-                        <section className='flex min-w-0 flex-1 flex-col gap-4 overflow-y-auto pr-1'>
-                            <div className='flex flex-wrap items-end justify-between gap-3'>
-                                <LibraryHeader recordings={recordings} />
-                                <div className='w-[92px]'>
-                                    <Segmented<LibraryView>
-                                        size='sm'
-                                        value={view}
-                                        onChange={changeView}
-                                        options={[
-                                            { value: 'cards', icon: <LayoutGrid className='h-3.5 w-3.5' />, hint: 'Show as cards' },
-                                            { value: 'table', icon: <List className='h-3.5 w-3.5' />, hint: 'Show as a table' },
-                                        ]}
-                                    />
-                                </div>
+                    <section className='flex min-h-0 flex-1 flex-col gap-5 overflow-y-auto pr-1'>
+                        <div className='flex items-center justify-between gap-3'>
+                            <LibraryHeader recordings={recordings} />
+                            <div className='w-[92px]'>
+                                <Segmented<LibraryView>
+                                    size='sm'
+                                    value={view}
+                                    onChange={changeView}
+                                    options={[
+                                        { value: 'cards', icon: <LayoutGrid className='h-3.5 w-3.5' />, hint: 'Show as a grid' },
+                                        { value: 'table', icon: <List className='h-3.5 w-3.5' />, hint: 'Show as a list' },
+                                    ]}
+                                />
                             </div>
-                            <RecordingsList recordings={recordings} view={view} selectedId={selected?.id ?? null} onSelect={(p) => setSelectedId(p.id)} onOpen={setEditing} />
-                        </section>
-                        <aside className='w-[360px] shrink-0'>
-                            {selected ? (
-                                <RecordingDetails key={selected.id} project={selected} onOpen={() => setEditing(selected)} onDeleted={refreshRecordings} />
-                            ) : (
-                                <div className='flex h-full flex-col items-center justify-center gap-2 rounded-2xl border border-dashed border-line text-sm text-muted'>
-                                    <MousePointerClick className='h-5 w-5' />
-                                    Select a recording to see its details
-                                </div>
-                            )}
-                        </aside>
-                    </div>
+                        </div>
+                        <RecordingsList recordings={recordings} view={view} onOpen={setEditing} onDeleted={refreshRecordings} />
+                    </section>
                 )}
             </main>
 
@@ -197,7 +182,7 @@ export function MainWindow() {
                     }}
                 />
             )}
-            {setup && <SetupFlow initialStep={setup} onClose={() => setSetup(null)} onPermissionsChange={setPermissions} />}
+            {setup && <SetupFlow initialStep={setup} onClose={() => setSetup(null)} onPermissionsChange={setPermissions} onStartRecording={() => setRecorderOpen(true)} />}
         </div>
         {recorder}
         </>
@@ -219,7 +204,7 @@ function RecorderDialog({ open, onClose, children }: { open: boolean; onClose: (
             className={open ? 'fixed inset-0 z-40 flex items-center justify-center bg-black/60 p-6 backdrop-blur-sm' : 'hidden'}
             onPointerDown={(e) => e.target === e.currentTarget && onClose()}
         >
-            <div className='flex h-[min(720px,100%)] w-full max-w-[960px] flex-col'>{children}</div>
+            <div className='flex h-[min(640px,100%)] w-full max-w-[880px] flex-col'>{children}</div>
         </div>
     );
 }

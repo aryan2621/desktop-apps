@@ -385,6 +385,19 @@ pub fn import_background(app: AppHandle, request: tauri::ipc::Request<'_>) -> Re
     Ok(file)
 }
 
+/// Saves the library poster frame (a small JPEG made by the webview) as `thumb.jpg` in the project.
+#[tauri::command]
+pub fn save_thumbnail(app: AppHandle, request: tauri::ipc::Request<'_>) -> Result<(), String> {
+    let tauri::ipc::InvokeBody::Raw(bytes) = request.body() else {
+        return Err("Expected raw bytes".into());
+    };
+    let id = request.headers().get("id").and_then(|v| v.to_str().ok()).ok_or("Missing id header")?;
+    if bytes.len() > 2 * 1024 * 1024 || !bytes.starts_with(&[0xff, 0xd8]) {
+        return Err("Expected a small JPEG".into());
+    }
+    std::fs::write(project_dir(&app, id)?.join("thumb.jpg"), bytes).map_err(|e| e.to_string())
+}
+
 /// Appends a diagnostic line from the webview to ~/Library/Logs/com.capturita.app/webview.log.
 #[tauri::command]
 pub fn log_debug(app: AppHandle, message: String) -> Result<(), String> {

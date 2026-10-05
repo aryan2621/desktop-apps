@@ -1,9 +1,9 @@
-import { useState, type ReactNode } from 'react';
+import { useEffect, useState } from 'react';
 import { revealItemInDir } from '@tauri-apps/plugin-opener';
-import { AppWindow, Camera, Clock, Crop, Film, FolderOpen, Mic, Monitor, MousePointerClick, Pencil, Plus, Sparkles, Trash2, Volume2 } from 'lucide-react';
+import { AppWindow, Camera, Crop, Ellipsis, Film, FolderOpen, Mic, Monitor, MousePointerClick, Plus, Sparkles, Trash2, Volume2 } from 'lucide-react';
 import { toast } from 'sonner';
 import { api, errorMessage, fileUrl, formatDuration, type Project } from '../lib/api';
-import { Button, Kbd, cx } from './ui';
+import { Button, Kbd, Popover, cx } from './ui';
 
 const relative = new Intl.RelativeTimeFormat(undefined, { numeric: 'auto' });
 
@@ -26,42 +26,12 @@ function whenRecorded(iso: string) {
 
 const SOURCE_ICONS = { display: Monitor, window: AppWindow, area: Crop };
 
-/** "Good morning" … by the time of day. */
-function greeting() {
-    const hour = new Date().getHours();
-    return hour < 5 ? 'Working late' : hour < 12 ? 'Good morning' : hour < 17 ? 'Good afternoon' : 'Good evening';
-}
-
-/** Total length in words: "45 sec", "12 min", "1 h 5 min". */
-function totalLength(seconds: number) {
-    if (seconds < 60) return `${Math.round(seconds)} sec`;
-    const minutes = Math.round(seconds / 60);
-    return minutes < 60 ? `${minutes} min` : `${Math.floor(minutes / 60)} h ${minutes % 60} min`;
-}
-
-/** The library's heading: a greeting, and how much is in it. */
+/** The library's heading. */
 export function LibraryHeader({ recordings }: { recordings: Project[] }) {
-    const seconds = recordings.reduce((sum, project) => sum + project.duration, 0);
     return (
-        <div className='flex flex-wrap items-end justify-between gap-3'>
-            <div>
-                <p className='text-sm text-subtle'>{greeting()}</p>
-                <h2 className='font-serif text-3xl font-medium tracking-tight'>
-                    {recordings.length ? 'Your recordings' : "Let's make your first one"}
-                </h2>
-            </div>
-            {recordings.length > 0 && (
-                <div className='flex gap-2'>
-                    <span className='inline-flex items-center gap-1.5 rounded-full bg-panel-2 px-3 py-1 text-xs text-muted'>
-                        <Film className='h-3.5 w-3.5' />
-                        {recordings.length} {recordings.length === 1 ? 'recording' : 'recordings'}
-                    </span>
-                    <span className='inline-flex items-center gap-1.5 rounded-full bg-panel-2 px-3 py-1 text-xs text-muted'>
-                        <Clock className='h-3.5 w-3.5' />
-                        {totalLength(seconds)}
-                    </span>
-                </div>
-            )}
+        <div className='flex items-baseline gap-3'>
+            <h2 className='font-serif text-2xl font-medium tracking-tight'>{recordings.length ? 'Recordings' : "Let's make your first one"}</h2>
+            {recordings.length > 0 && <span className='text-sm text-subtle'>{recordings.length}</span>}
         </div>
     );
 }
@@ -126,20 +96,8 @@ export function EmptyLibrary({ onNew }: { onNew: () => void }) {
     );
 }
 
-/** The recordings, as cards or a table. A click selects one (details on the right); a double-click opens it. */
-export function RecordingsList({
-    recordings,
-    view,
-    selectedId,
-    onSelect,
-    onOpen,
-}: {
-    recordings: Project[];
-    view: LibraryView;
-    selectedId: string | null;
-    onSelect: (project: Project) => void;
-    onOpen: (project: Project) => void;
-}) {
+/** The recordings, as cards or a table. A click opens one in the editor; more actions are in its menu. */
+export function RecordingsList({ recordings, view, onOpen, onDeleted }: { recordings: Project[]; view: LibraryView; onOpen: (project: Project) => void; onDeleted: () => void }) {
     if (view === 'table') {
         return (
             <div className='overflow-hidden rounded-xl border border-line bg-panel'>
@@ -150,20 +108,14 @@ export function RecordingsList({
                             <th className='px-3 py-2 font-semibold'>Recorded</th>
                             <th className='w-20 px-3 py-2 font-semibold'>Length</th>
                             <th className='w-24 px-3 py-2 font-semibold'>Tracks</th>
+                            <th className='w-12 px-3 py-2' />
                         </tr>
                     </thead>
                     <tbody>
                         {recordings.map((project) => {
                             const SourceIcon = SOURCE_ICONS[project.source.type] ?? Monitor;
-                            const selected = project.id === selectedId;
                             return (
-                                <tr
-                                    key={project.id}
-                                    onClick={() => onSelect(project)}
-                                    onDoubleClick={() => onOpen(project)}
-                                    className={cx('cursor-default border-b border-line last:border-0', selected ? 'bg-accent/10' : 'hover:bg-panel-2')}
-                                    title='Double-click to open in the editor'
-                                >
+                                <tr key={project.id} onClick={() => onOpen(project)} className='group cursor-default border-b border-line last:border-0 hover:bg-panel-2' title='Open in the editor'>
                                     <td className='px-3 py-2'>
                                         <span className='flex min-w-0 items-center gap-3'>
                                             <span className='relative block aspect-video w-16 shrink-0 overflow-hidden rounded-md bg-stage'>
@@ -179,6 +131,9 @@ export function RecordingsList({
                                     <td className='px-3 py-2 font-mono text-xs text-muted'>{formatDuration(project.duration)}</td>
                                     <td className='px-3 py-2'>
                                         <TrackIcons project={project} />
+                                    </td>
+                                    <td className='px-2 py-2' onClick={(e) => e.stopPropagation()}>
+                                        <RecordingMenu project={project} onDeleted={onDeleted} />
                                     </td>
                                 </tr>
                             );
@@ -199,13 +154,7 @@ export function RecordingsList({
                     </h3>
                     <div className='grid grid-cols-[repeat(auto-fill,minmax(220px,1fr))] gap-4'>
                         {group.items.map((project) => (
-                            <RecordingCard
-                                key={project.id}
-                                project={project}
-                                selected={project.id === selectedId}
-                                onSelect={() => onSelect(project)}
-                                onOpen={() => onOpen(project)}
-                            />
+                            <RecordingCard key={project.id} project={project} onOpen={() => onOpen(project)} onDeleted={onDeleted} />
                         ))}
                     </div>
                 </section>
@@ -214,10 +163,73 @@ export function RecordingsList({
     );
 }
 
-/** The first frame of a recording, from its screen track. */
+/** Poster frames are made one at a time, so a big library doesn't decode dozens of videos at once. */
+let posterQueue: Promise<unknown> = Promise.resolve();
+
+/** Grabs a frame half a second in, saves it as thumb.jpg in the project and returns a URL for it. */
+function makePoster(project: Project) {
+    const job = posterQueue.then(
+        () =>
+            new Promise<string>((resolve, reject) => {
+                const video = document.createElement('video');
+                video.muted = true;
+                video.preload = 'auto';
+                video.src = fileUrl(project, project.tracks.screen.file);
+                const done = () => {
+                    video.removeAttribute('src');
+                    video.load();
+                };
+                video.onerror = () => {
+                    done();
+                    reject(new Error('Could not read the recording'));
+                };
+                video.onloadeddata = () => {
+                    video.currentTime = Math.min(0.5, Math.max(0, project.tracks.screen.duration - 0.05));
+                };
+                video.onseeked = () => {
+                    const canvas = document.createElement('canvas');
+                    canvas.width = 480;
+                    canvas.height = Math.max(1, Math.round((480 * video.videoHeight) / Math.max(1, video.videoWidth)));
+                    canvas.getContext('2d')?.drawImage(video, 0, 0, canvas.width, canvas.height);
+                    done();
+                    canvas.toBlob(
+                        (blob) => {
+                            if (!blob) return reject(new Error('Could not make a thumbnail'));
+                            api.saveThumbnail(project.id, blob).catch(() => {});
+                            resolve(URL.createObjectURL(blob));
+                        },
+                        'image/jpeg',
+                        0.8
+                    );
+                };
+            })
+    );
+    posterQueue = job.catch(() => {});
+    return job;
+}
+
+/** The recording's poster frame (thumb.jpg), made the first time it's needed. */
 function Thumbnail({ project }: { project: Project }) {
+    const [url, setUrl] = useState(() => fileUrl(project, 'thumb.jpg'));
+    const [failed, setFailed] = useState(false);
+    useEffect(
+        () => () => {
+            if (url.startsWith('blob:')) URL.revokeObjectURL(url);
+        },
+        [url]
+    );
+    if (failed) return <Film className='absolute left-1/2 top-1/2 h-5 w-5 -translate-x-1/2 -translate-y-1/2 text-subtle' />;
     return (
-        <video src={`${fileUrl(project, project.tracks.screen.file)}#t=0.5`} preload='metadata' muted className='absolute inset-0 h-full w-full object-contain' />
+        <img
+            src={url}
+            alt=''
+            draggable={false}
+            className='absolute inset-0 h-full w-full object-contain'
+            onError={() => {
+                if (url.startsWith('blob:')) setFailed(true);
+                else makePoster(project).then(setUrl, () => setFailed(true));
+            }}
+        />
     );
 }
 
@@ -244,47 +256,36 @@ function TrackIcons({ project, className }: { project: Project; className?: stri
     );
 }
 
-function RecordingCard({ project, selected, onSelect, onOpen }: { project: Project; selected: boolean; onSelect: () => void; onOpen: () => void }) {
+function RecordingCard({ project, onOpen, onDeleted }: { project: Project; onOpen: () => void; onDeleted: () => void }) {
     const SourceIcon = SOURCE_ICONS[project.source.type] ?? Monitor;
     return (
-        <button
-            onClick={onSelect}
-            onDoubleClick={onOpen}
-            className={cx(
-                'group block w-full cursor-default overflow-hidden rounded-xl border bg-panel text-left shadow-sm transition-colors',
-                selected ? 'border-accent ring-2 ring-accent/30' : 'border-line hover:border-line-strong'
-            )}
-            title='Double-click to open in the editor'
-        >
-            <span className='relative block aspect-video w-full overflow-hidden bg-stage'>
-                <Thumbnail project={project} />
-                <span className='absolute bottom-2 left-2 rounded-md bg-black/70 px-1.5 py-0.5 font-mono text-[11px] text-white'>{formatDuration(project.duration)}</span>
-                <TrackIcons project={project} className='absolute bottom-2 right-2 rounded-md bg-black/60 px-1.5 py-1 text-white' />
-            </span>
-            <span className='flex items-center gap-3 px-3 py-2.5'>
-                <span className='flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-panel-2 text-muted'>
-                    <SourceIcon className='h-4 w-4' />
+        <div className='group relative overflow-hidden rounded-xl border border-line bg-panel shadow-sm transition-[border-color,transform,box-shadow] duration-200 hover:-translate-y-0.5 hover:border-line-strong hover:shadow-md'>
+            <button onClick={onOpen} className='block w-full cursor-default text-left' title='Open in the editor'>
+                <span className='relative block aspect-video w-full overflow-hidden bg-stage'>
+                    <Thumbnail project={project} />
+                    <span className='absolute bottom-2 left-2 rounded-md bg-black/70 px-1.5 py-0.5 font-mono text-[11px] text-white'>{formatDuration(project.duration)}</span>
+                    <TrackIcons project={project} className='absolute bottom-2 right-2 rounded-md bg-black/60 px-1.5 py-1 text-white' />
                 </span>
-                <span className='min-w-0'>
-                    <span className='block truncate text-sm font-medium'>{project.source.name}</span>
-                    <span className='block text-xs text-subtle' title={new Date(project.createdAt).toLocaleString()}>
-                        {whenRecorded(project.createdAt)}
+                <span className='flex items-center gap-2.5 px-3 py-2.5 pr-10'>
+                    <SourceIcon className='h-4 w-4 shrink-0 text-subtle' />
+                    <span className='min-w-0'>
+                        <span className='block truncate text-sm font-medium'>{project.source.name}</span>
+                        <span className='block text-xs text-subtle' title={new Date(project.createdAt).toLocaleString()}>
+                            {whenRecorded(project.createdAt)}
+                        </span>
                     </span>
                 </span>
-            </span>
-        </button>
+            </button>
+            <div className='absolute bottom-2 right-2'>
+                <RecordingMenu project={project} onDeleted={onDeleted} />
+            </div>
+        </div>
     );
 }
 
-const SOURCE_LABELS = { display: 'Whole screen', window: 'One window', area: 'Part of the screen' };
-
-/** The selected recording: what's in it, and what to do with it. */
-export function RecordingDetails({ project, onOpen, onDeleted }: { project: Project; onOpen: () => void; onDeleted: () => void }) {
+/** Show in Finder and Delete (with a confirmation), behind a "…" button. */
+function RecordingMenu({ project, onDeleted }: { project: Project; onDeleted: () => void }) {
     const [confirming, setConfirming] = useState(false);
-    const { tracks } = project;
-    const SourceIcon = SOURCE_ICONS[project.source.type] ?? Monitor;
-    const size = tracks.screen.width && tracks.screen.height ? `${tracks.screen.width} × ${tracks.screen.height}` : null;
-
     const remove = async () => {
         try {
             await api.deleteRecording(project.id);
@@ -293,66 +294,65 @@ export function RecordingDetails({ project, onOpen, onDeleted }: { project: Proj
             toast.error(errorMessage(error));
         }
     };
-
-    const rows: [string, ReactNode][] = [
-        ['Recorded', new Date(project.createdAt).toLocaleString(undefined, { dateStyle: 'medium', timeStyle: 'short' })],
-        ['Length', formatDuration(project.duration)],
-        ['Source', SOURCE_LABELS[project.source.type] ?? project.source.type],
-        ...(size ? ([['Size', `${size} px`]] as [string, ReactNode][]) : []),
-        ['Microphone', tracks.microphone ? 'Recorded' : 'None'],
-        ['Mac audio', tracks.systemAudio ? 'Recorded' : 'None'],
-        ['Camera', tracks.camera ? 'Recorded' : 'None'],
-    ];
-
     return (
-        <div className='flex h-full flex-col overflow-hidden rounded-2xl border border-line bg-panel shadow-sm'>
-            <div className='min-h-0 flex-1 space-y-5 overflow-y-auto p-5'>
-                <div className='flex items-start gap-3'>
-                    <span className='flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-panel-2 text-muted'>
-                        <SourceIcon className='h-4 w-4' />
-                    </span>
-                    <div className='min-w-0'>
-                        <h3 className='truncate font-serif text-lg font-medium tracking-tight' title={project.source.name}>
-                            {project.source.name}
-                        </h3>
-                        <p className='text-xs text-subtle'>{whenRecorded(project.createdAt)}</p>
-                    </div>
-                </div>
-                <dl className='divide-y divide-line rounded-xl border border-line text-sm'>
-                    {rows.map(([label, value]) => (
-                        <div key={label} className='flex items-center justify-between gap-4 px-3 py-2'>
-                            <dt className='text-muted'>{label}</dt>
-                            <dd className='truncate text-right'>{value}</dd>
-                        </div>
-                    ))}
-                </dl>
-            </div>
-            <div className='space-y-2 border-t border-line p-4'>
-                <Button variant='primary' className='w-full' onClick={onOpen}>
-                    <Pencil className='h-4 w-4' /> Open in editor
+        <Popover
+            align='end'
+            side='top'
+            trigger={(open, toggle) => (
+                <Button
+                    size='icon-sm'
+                    variant='ghost'
+                    className={cx('h-7 w-7', !open && 'opacity-60 group-hover:opacity-100')}
+                    onClick={(e) => {
+                        e.stopPropagation();
+                        setConfirming(false);
+                        toggle();
+                    }}
+                    title='More'
+                    aria-label='More actions'
+                >
+                    <Ellipsis className='h-4 w-4' />
                 </Button>
-                {confirming ? (
-                    <div className='flex items-center gap-2 rounded-lg bg-danger-soft p-2 text-xs'>
-                        <span className='flex-1 text-danger-fg'>Delete this recording and its edits for good?</span>
-                        <Button size='sm' variant='danger' onClick={remove}>
-                            Delete
-                        </Button>
-                        <Button size='sm' variant='ghost' onClick={() => setConfirming(false)}>
-                            Keep
-                        </Button>
+            )}
+        >
+            {(close) =>
+                confirming ? (
+                    <div className='w-56 space-y-2 p-1 text-xs'>
+                        <p className='text-danger-fg'>Delete this recording and its edits for good?</p>
+                        <div className='flex justify-end gap-2'>
+                            <Button size='sm' variant='ghost' onClick={() => setConfirming(false)}>
+                                Keep
+                            </Button>
+                            <Button
+                                size='sm'
+                                variant='danger'
+                                onClick={() => {
+                                    close();
+                                    remove();
+                                }}
+                            >
+                                Delete
+                            </Button>
+                        </div>
                     </div>
                 ) : (
-                    <div className='grid grid-cols-2 gap-2'>
-                        <Button size='sm' onClick={() => revealItemInDir(project.path)}>
+                    <div className='flex flex-col'>
+                        <button
+                            className='flex h-8 items-center gap-2 rounded-md px-2 text-left text-xs hover:bg-panel-2'
+                            onClick={() => {
+                                close();
+                                revealItemInDir(project.path);
+                            }}
+                        >
                             <FolderOpen className='h-3.5 w-3.5' /> Show in Finder
-                        </Button>
-                        <Button size='sm' onClick={() => setConfirming(true)}>
-                            <Trash2 className='h-3.5 w-3.5' /> Delete
-                        </Button>
+                        </button>
+                        <button className='flex h-8 items-center gap-2 rounded-md px-2 text-left text-xs text-danger-fg hover:bg-panel-2' onClick={() => setConfirming(true)}>
+                            <Trash2 className='h-3.5 w-3.5' /> Delete…
+                        </button>
                     </div>
-                )}
-            </div>
-        </div>
+                )
+            }
+        </Popover>
     );
 }
 

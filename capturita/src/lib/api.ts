@@ -183,6 +183,7 @@ export const api = {
         invoke<string>('import_music', new Uint8Array(await file.arrayBuffer()), { headers: { id, name: encodeURIComponent(file.name) } }),
     importBackground: async (id: string, file: File) =>
         invoke<string>('import_background', new Uint8Array(await file.arrayBuffer()), { headers: { id, name: encodeURIComponent(file.name) } }),
+    saveThumbnail: (id: string, jpeg: Blob) => jpeg.arrayBuffer().then((bytes) => invoke<void>('save_thumbnail', new Uint8Array(bytes), { headers: { id } })),
     copyFileToClipboard: (path: string) => invoke<void>('copy_file_to_clipboard', { path }),
     recordingsDir: () => invoke<string>('recordings_dir'),
     restart: () => invoke<void>('restart_app'),
