@@ -195,8 +195,19 @@ export function EditorView({ project, onClose }: { project: Project; onClose: ()
     const lastTimeUpdate = useRef(0);
     useEffect(() => {
         let frame = 0;
+        let previous = performance.now();
+        let lastSlowLog = 0;
         const loop = () => {
             const playback = playbackRef.current;
+            // Note stutters while playing, so a slow preview can be diagnosed from the app's log.
+            const started = performance.now();
+            const gap = started - previous;
+            previous = started;
+            if (playback.playing && gap > 80 && started - lastSlowLog > 1000) {
+                lastSlowLog = started;
+                const video = playback.screenRef.current;
+                api.log(`[preview] slow frame ${Math.round(gap)} ms at ${playback.now().toFixed(2)} s (video ${video?.currentTime.toFixed(2)}, seeking ${video?.seeking}, ready ${video?.readyState})`);
+            }
             const t = playback.tick();
             timelineRef.current?.setPlayhead(t);
             const now = performance.now();
@@ -228,6 +239,7 @@ export function EditorView({ project, onClose }: { project: Project; onClose: ()
                     time: position.source,
                     ignoreCrop: croppingRef.current,
                     noZoom: placingFocusRef.current && !playback.playing,
+                    preview: true,
                 });
             }
             frame = requestAnimationFrame(loop);

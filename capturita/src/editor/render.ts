@@ -48,6 +48,12 @@ export interface FrameInputs {
     ignoreCrop?: boolean;
     /** Show the cropped screen without zooming (while placing a zoom's focus). */
     noZoom?: boolean;
+    /**
+     * Drawing for the live preview. Screen motion blur is left out there: it means copying the
+     * full-size video frame again on every frame of a zoom, which stalls playback of big
+     * (Retina) recordings. Exports always include it.
+     */
+    preview?: boolean;
 }
 
 /** Where the screen sits inside a frame of the given size. */
@@ -136,7 +142,7 @@ export function drawFrame(ctx: CanvasRenderingContext2D, width: number, height: 
         ctx.imageSmoothingQuality = 'high';
         const drawScreen = (view: NormalizedRect) =>
             ctx.drawImage(screen.image, view.x * screen.width, view.y * screen.height, view.width * screen.width, view.height * screen.height, content.x, content.y, content.width, content.height);
-        const trail = inputs.ignoreCrop || inputs.noZoom ? [] : blurTrail(edit, project, cursor, time, width, height, crop, content);
+        const trail = inputs.ignoreCrop || inputs.noZoom || inputs.preview ? [] : blurTrail(edit, project, cursor, time, width, height, crop, content);
         const blurSource = trail.length > 0 ? copyForBlur(screen, trail, content) : null;
         if (blurSource) {
             // Average the views along the camera's recent path: each copy covers its share. They

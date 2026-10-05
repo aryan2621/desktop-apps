@@ -399,7 +399,7 @@ function ZoomPanel({ edit, onChange, hasClicks, onAutoZoom, onAddZoom, onApplyZo
                     />
                 </div>
                 <Slider label='Motion blur' value={edit.motion.blur} min={0} max={1} step={0.05} format={(v) => (v === 0 ? 'Off' : percent(v))} onChange={(blur) => onChange({ motion: { ...edit.motion, blur } }, 'motion-blur')} />
-                <p className='text-xs text-muted'>Zooms ease in with a spring, pan to keep the cursor in view, and glide from one zoom to the next.</p>
+                <p className='text-xs text-muted'>Zooms ease in with a spring, pan to keep the cursor in view, and glide from one zoom to the next. Blur on zooms is added in the export, so the preview stays smooth.</p>
             </Section>
         </div>
     );
