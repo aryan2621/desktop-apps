@@ -21,22 +21,6 @@ demo, a user guide and a developer guide.
 | Relay | 12+ | Apple silicon. On-device models 2.7–16.5 GB, optional (or use your Claude, OpenAI or Gemini key). |
 | PortMan | 10.13+ | Apple silicon build. Also Windows and Linux. |
 
-## Opening an app the first time
-
-The apps aren't signed with a paid Apple Developer certificate, so your system warns you once.
-
-**macOS, "Apple could not verify … is free of malware":** click **Done**, open **System Settings →
-Privacy & Security**, scroll down, click **Open Anyway** next to the app and confirm.
-
-If macOS says the app **"is damaged and can't be opened"**, run this once in Terminal (with the
-app's name) and open it again:
-
-```bash
-xattr -dr com.apple.quarantine /Applications/Murmur.app
-```
-
-**Windows, "Windows protected your PC":** click **More info → Run anyway**.
-
 ## Privacy
 
 - Speech, AI and captions run on your Mac. Nothing is uploaded unless you ask (a YouTube upload, a
