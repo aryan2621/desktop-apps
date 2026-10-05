@@ -70,6 +70,8 @@ pub fn run() {
             ai::cancel_ai_download,
             ai::ai_edit,
             captions::caption_model_status,
+            captions::caption_models,
+            captions::select_caption_model,
             captions::transcribe,
             captions::download_caption_model,
             captions::delete_caption_model,

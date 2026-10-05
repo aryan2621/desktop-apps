@@ -158,6 +158,16 @@ export interface UploadRequest {
 
 const helper = <T>(cmd: string, args?: Record<string, unknown>) => invoke<T>('recorder_request', { cmd, args });
 
+export interface CaptionModel {
+    id: string;
+    label: string;
+    note: string;
+    sizeMb: number;
+    downloaded: boolean;
+    /** The model captions use. */
+    selected: boolean;
+}
+
 export const api = {
     permissions: () => helper<Permissions>('permissions'),
     requestPermission: (kind: PermissionKind) => helper<Permissions>('requestPermission', { kind }),
@@ -199,14 +209,18 @@ export const api = {
     /** Downloads an AI model once, the chosen one by default (progress: `ai-progress` events, 0–1). */
     downloadAiModel: (id?: string) => invoke<void>('download_ai_model', { id }),
     cancelAiDownload: () => invoke<void>('cancel_ai_download'),
-    captionModel: () => invoke<{ downloaded: boolean; sizeMb: number }>('caption_model_status'),
+    /** The speech model captions use. */
+    captionModel: () => invoke<CaptionModel>('caption_model_status'),
+    /** Every speech model to choose from (the same as Murmur's). */
+    captionModels: () => invoke<CaptionModel[]>('caption_models'),
+    selectCaptionModel: (id: string) => invoke<void>('select_caption_model', { id }),
     /** Transcribes 16 kHz mono audio into timed words (progress: `captions-progress` events). */
     transcribe: (audio: Float32Array, language: string) =>
         invoke<{ start: number; end: number; text: string }[]>('transcribe', new Uint8Array(audio.buffer, audio.byteOffset, audio.byteLength), { headers: { language } }),
     cancelTranscription: () => invoke<void>('cancel_transcription'),
     /** Downloads the speech model ahead of time (progress: `captions-progress` events). */
-    downloadCaptionModel: () => invoke<void>('download_caption_model'),
-    deleteCaptionModel: () => invoke<void>('delete_caption_model'),
+    downloadCaptionModel: (id?: string) => invoke<void>('download_caption_model', { id }),
+    deleteCaptionModel: (id?: string) => invoke<void>('delete_caption_model', { id }),
     /** Saves a text file in ~/Movies/Capturita/Exports; returns its path. */
     saveExportText: (name: string, extension: string, contents: string) => invoke<string>('save_export_text', { name, extension, contents }),
 

@@ -20,7 +20,7 @@ import {
     X,
 } from 'lucide-react';
 import { toast } from 'sonner';
-import { api, errorMessage, type AiModels, type CaptionProgress, type GoogleStatus } from '../lib/api';
+import { api, errorMessage, type AiModels, type CaptionModel, type CaptionProgress, type GoogleStatus } from '../lib/api';
 import { useTheme, type ThemeChoice } from '../lib/theme';
 import { Button, IconButton, Modal, ProgressBar, Segmented, cx } from './ui';
 
@@ -245,22 +245,20 @@ function AiModelsSection() {
 }
 
 function CaptionsSection() {
-    const [model, setModel] = useState<{
-        downloaded: boolean;
-        sizeMb: number;
-    } | null>(null);
-    const [progress, setProgress] = useState<number | null>(null);
+    const [models, setModels] = useState<CaptionModel[] | null>(null);
+    /** The model being downloaded, and how far along it is. */
+    const [downloading, setDownloading] = useState<{ id: string; progress: number } | null>(null);
 
     const refresh = useCallback(() => {
-        api.captionModel()
-            .then(setModel)
+        api.captionModels()
+            .then(setModels)
             .catch((error) => toast.error(errorMessage(error)));
     }, []);
 
     useEffect(() => {
         refresh();
         const unlisten = listen<CaptionProgress>('captions-progress', ({ payload }) => {
-            if (payload.phase === 'download') setProgress(payload.progress);
+            if (payload.phase === 'download') setDownloading((d) => (d ? { ...d, progress: payload.progress } : d));
         });
         return () => {
             unlisten.then((u) => u());
@@ -274,58 +272,82 @@ function CaptionsSection() {
             const message = errorMessage(error);
             if (message !== 'Cancelled') toast.error(message);
         }
-        setProgress(null);
         refresh();
     };
+    /** Use a model; download it first if it isn't here yet. */
+    const use = (model: CaptionModel) =>
+        run(async () => {
+            if (!model.downloaded) {
+                setDownloading({ id: model.id, progress: 0 });
+                try {
+                    await api.downloadCaptionModel(model.id);
+                } finally {
+                    setDownloading(null);
+                }
+            }
+            await api.selectCaptionModel(model.id);
+            toast.success(`Captions now use ${model.label}`);
+        });
 
-    if (!model) return null;
+    if (!models) return null;
     return (
         <div className='space-y-4'>
             <p className='text-sm text-muted'>
-                Captions are made from what's said in a recording, on this Mac, with Whisper (large-v3 turbo). Nothing is uploaded. AI editing uses them too.
+                Captions are made on this Mac with Whisper; nothing is uploaded. Bigger models are more accurate (especially for Hindi, accents and mixed languages) but slower
+                and larger. English-only models only caption English. AI editing uses the same model.
             </p>
-            <div className='space-y-3 rounded-xl border border-line p-4'>
-                <div className='flex items-center gap-3'>
-                    <span
-                        className={cx(
-                            'flex h-8 w-8 shrink-0 items-center justify-center rounded-lg',
-                            model.downloaded ? 'bg-success-soft text-success-fg' : 'bg-raised text-muted'
-                        )}
-                    >
-                        {model.downloaded ? <Check className='h-4 w-4' /> : <Captions className='h-4 w-4' />}
-                    </span>
-                    <div className='min-w-0 flex-1'>
-                        <p className='text-sm font-medium'>{model.downloaded ? 'Speech model ready' : 'Speech model'}</p>
-                        <p className='text-xs text-muted'>
-                            {model.sizeMb} MB · {model.downloaded ? 'captions work offline' : 'downloads the first time you make captions, or now'}
-                        </p>
-                    </div>
-                    {model.downloaded ? (
-                        <IconButton
-                            label={`Delete the speech model (frees ${model.sizeMb} MB)`}
-                            size='icon-sm'
-                            onClick={() => run(() => api.deleteCaptionModel())}
-                        >
-                            <Trash2 className='h-3.5 w-3.5' />
-                        </IconButton>
-                    ) : progress !== null ? (
-                        <Button size='sm' variant='ghost' onClick={() => api.cancelTranscription()}>
-                            <X className='h-3.5 w-3.5' /> Cancel
-                        </Button>
-                    ) : (
-                        <Button
-                            size='sm'
-                            variant='primary'
-                            onClick={() => {
-                                setProgress(0);
-                                run(() => api.downloadCaptionModel());
-                            }}
-                        >
-                            <Download className='h-3.5 w-3.5' /> Download
-                        </Button>
-                    )}
-                </div>
-                {progress !== null && <Progress value={progress} />}
+            <div className='divide-y divide-line rounded-xl border border-line'>
+                {models.map((model) => {
+                    const busy = downloading?.id === model.id;
+                    return (
+                        <div key={model.id} className='space-y-2 p-3'>
+                            <div className='flex items-center gap-3'>
+                                <span
+                                    className={cx(
+                                        'flex h-8 w-8 shrink-0 items-center justify-center rounded-lg',
+                                        model.selected ? 'bg-accent/15 text-accent' : model.downloaded ? 'bg-success-soft text-success-fg' : 'bg-raised text-muted'
+                                    )}
+                                >
+                                    {model.selected || model.downloaded ? <Check className='h-4 w-4' /> : <Captions className='h-4 w-4' />}
+                                </span>
+                                <div className='min-w-0 flex-1'>
+                                    <p className='flex items-center gap-2 text-sm font-medium'>
+                                        {model.label}
+                                        {model.selected && <span className='rounded-full bg-accent/15 px-2 py-0.5 text-[10px] font-medium text-accent'>In use</span>}
+                                    </p>
+                                    <p className='text-xs text-muted'>
+                                        {model.sizeMb >= 1000 ? `${(model.sizeMb / 1000).toFixed(1)} GB` : `${model.sizeMb} MB`} · {model.note}
+                                    </p>
+                                </div>
+                                {busy ? (
+                                    <Button size='sm' variant='ghost' onClick={() => api.cancelTranscription()}>
+                                        <X className='h-3.5 w-3.5' /> Cancel
+                                    </Button>
+                                ) : (
+                                    <div className='flex shrink-0 items-center gap-1'>
+                                        {!model.selected && (
+                                            <Button size='sm' variant={model.downloaded ? 'secondary' : 'primary'} disabled={!!downloading} onClick={() => use(model)}>
+                                                {model.downloaded ? (
+                                                    'Use'
+                                                ) : (
+                                                    <>
+                                                        <Download className='h-3.5 w-3.5' /> Download
+                                                    </>
+                                                )}
+                                            </Button>
+                                        )}
+                                        {model.downloaded && (
+                                            <IconButton label={`Delete ${model.label} (frees ${model.sizeMb} MB)`} size='icon-sm' disabled={!!downloading} onClick={() => run(() => api.deleteCaptionModel(model.id))}>
+                                                <Trash2 className='h-3.5 w-3.5' />
+                                            </IconButton>
+                                        )}
+                                    </div>
+                                )}
+                            </div>
+                            {busy && <Progress value={downloading.progress} />}
+                        </div>
+                    );
+                })}
             </div>
         </div>
     );

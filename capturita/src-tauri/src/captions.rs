@@ -15,9 +15,20 @@ use whisper_rs::{FullParams, SamplingStrategy, WhisperContext, WhisperContextPar
 
 use crate::recording::recordings_root;
 
-/// Whisper large-v3 turbo, 5-bit quantized: near the best accuracy at a fraction of the size.
-const MODEL: &str = "large-v3-turbo-q5_0";
-const MODEL_URL: &str = "https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-large-v3-turbo-q5_0.bin";
+/// The Whisper models to choose from (the same list as Murmur): id, name, download size in MB,
+/// and a note. The first is the default: near the best accuracy at a fraction of the size.
+const MODELS: &[(&str, &str, u32, &str)] = &[
+    ("large-v3-turbo-q5_0", "Large v3 Turbo", 547, "Recommended: best accuracy for its speed."),
+    ("large-v3-turbo", "Large v3 Turbo (full)", 1620, "Marginally more accurate, 3× the size."),
+    ("large-v3-q5_0", "Large v3", 1080, "Slower; the most careful with accents and mixed languages."),
+    ("small", "Small (multilingual)", 466, "Fast; good for Hindi."),
+    ("small.en", "Small (English)", 466, "Fast, English only."),
+    ("base.en", "Base (English)", 142, "Very fast, less accurate."),
+    ("tiny.en", "Tiny (English)", 75, "Fastest, for older machines."),
+];
+const MODEL_BASE_URL: &str = "https://huggingface.co/ggerganov/whisper.cpp/resolve/main";
+/// Remembers the chosen model, next to the downloaded models.
+const CHOICE_FILE: &str = "caption-model.txt";
 const SAMPLE_RATE: usize = 16_000;
 /// Words in near-silent audio are almost always Whisper inventing text ("Thank you.").
 const SILENCE_RMS: f32 = 0.002;
@@ -39,28 +50,59 @@ pub struct Word {
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ModelStatus {
-    downloaded: bool,
+    id: &'static str,
+    label: &'static str,
+    note: &'static str,
     size_mb: u32,
+    downloaded: bool,
+    /// The model captions use.
+    selected: bool,
 }
 
-fn model_path(app: &AppHandle) -> Result<PathBuf, String> {
+fn models_dir(app: &AppHandle) -> Result<PathBuf, String> {
     let dir = app.path().app_data_dir().map_err(|e| e.to_string())?.join("models");
     std::fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
-    Ok(dir.join(format!("ggml-{MODEL}.bin")))
+    Ok(dir)
+}
+
+/// The model with this id, if it's one of ours.
+fn find_model(id: &str) -> Result<&'static (&'static str, &'static str, u32, &'static str), String> {
+    MODELS.iter().find(|m| m.0 == id).ok_or_else(|| format!("Unknown speech model: {id}"))
+}
+
+fn model_path(app: &AppHandle, id: &str) -> Result<PathBuf, String> {
+    Ok(models_dir(app)?.join(format!("ggml-{}.bin", find_model(id)?.0)))
+}
+
+/// The chosen model's id (the default if none was chosen, or the choice is unknown).
+fn selected_model(app: &AppHandle) -> &'static str {
+    let chosen = models_dir(app).ok().and_then(|dir| std::fs::read_to_string(dir.join(CHOICE_FILE)).ok()).unwrap_or_default();
+    MODELS.iter().find(|m| m.0 == chosen.trim()).map_or(MODELS[0].0, |m| m.0)
+}
+
+fn status(app: &AppHandle, model: &'static (&'static str, &'static str, u32, &'static str)) -> ModelStatus {
+    ModelStatus {
+        id: model.0,
+        label: model.1,
+        size_mb: model.2,
+        note: model.3,
+        downloaded: model_path(app, model.0).map(|p| p.exists()).unwrap_or(false),
+        selected: selected_model(app) == model.0,
+    }
 }
 
 fn progress(app: &AppHandle, phase: &str, value: f32) {
     let _ = app.emit("captions-progress", json!({ "phase": phase, "progress": value }));
 }
 
-/// Downloads the speech model if it isn't there yet, reporting progress as it goes.
-async fn ensure_model(app: &AppHandle, cancel: &AtomicBool) -> Result<PathBuf, String> {
-    let path = model_path(app)?;
+/// Downloads a speech model if it isn't there yet, reporting progress as it goes.
+async fn ensure_model(app: &AppHandle, id: &str, cancel: &AtomicBool) -> Result<PathBuf, String> {
+    let path = model_path(app, id)?;
     if path.exists() {
         return Ok(path);
     }
     let part = path.with_extension("bin.part");
-    let mut response = reqwest::get(MODEL_URL).await.map_err(|e| format!("Could not download the speech model: {e}"))?;
+    let mut response = reqwest::get(format!("{MODEL_BASE_URL}/ggml-{id}.bin")).await.map_err(|e| format!("Could not download the speech model: {e}"))?;
     if !response.status().is_success() {
         return Err(format!("Could not download the speech model ({})", response.status()));
     }
@@ -301,9 +343,23 @@ fn rms(samples: &[f32], from: f32, to: f32) -> f32 {
     (samples[a..b].iter().map(|s| s * s).sum::<f32>() / (b - a) as f32).sqrt()
 }
 
+/// The model captions use: whether it's downloaded, and its size.
 #[tauri::command]
 pub fn caption_model_status(app: AppHandle) -> Result<ModelStatus, String> {
-    Ok(ModelStatus { downloaded: model_path(&app)?.exists(), size_mb: 547 })
+    Ok(status(&app, find_model(selected_model(&app))?))
+}
+
+/// Every speech model to choose from.
+#[tauri::command]
+pub fn caption_models(app: AppHandle) -> Vec<ModelStatus> {
+    MODELS.iter().map(|m| status(&app, m)).collect()
+}
+
+/// Makes captions use this model from now on (it downloads the first time it's needed).
+#[tauri::command]
+pub fn select_caption_model(app: AppHandle, id: String) -> Result<(), String> {
+    let model = find_model(&id)?;
+    std::fs::write(models_dir(&app)?.join(CHOICE_FILE), model.0).map_err(|e| e.to_string())
 }
 
 /// Transcribes 16 kHz mono audio (the body: little-endian f32 samples). Header: `language`.
@@ -320,8 +376,11 @@ pub async fn transcribe(app: AppHandle, captions: State<'_, Captions>, request: 
     }
     captions.cancel.store(false, Ordering::SeqCst);
     let cancel = captions.cancel.clone();
+    let id = selected_model(&app);
+    // English-only models can't detect or transcribe other languages.
+    let language = if id.ends_with(".en") { "en".to_string() } else { language };
     let result = async {
-        let model = ensure_model(&app, &cancel).await?;
+        let model = ensure_model(&app, id, &cancel).await?;
         let app = app.clone();
         tauri::async_runtime::spawn_blocking(move || transcribe_words(Arc::new(move |phase: &str, value: f32| progress(&app, phase, value)), model, audio, language, cancel))
             .await
@@ -332,25 +391,35 @@ pub async fn transcribe(app: AppHandle, captions: State<'_, Captions>, request: 
     result
 }
 
-/// Downloads the speech model ahead of time (from setup), with `captions-progress` events.
+/// Downloads a speech model ahead of time (the chosen one if none is given), with
+/// `captions-progress` events.
 #[tauri::command]
-pub async fn download_caption_model(app: AppHandle, captions: State<'_, Captions>) -> Result<(), String> {
+pub async fn download_caption_model(app: AppHandle, captions: State<'_, Captions>, id: Option<String>) -> Result<(), String> {
+    let id = match id {
+        Some(id) => find_model(&id)?.0,
+        None => selected_model(&app),
+    };
     if captions.busy.swap(true, Ordering::SeqCst) {
         return Err("The speech model is already in use".into());
     }
     captions.cancel.store(false, Ordering::SeqCst);
-    let result = ensure_model(&app, &captions.cancel).await.map(|_| ());
+    let result = ensure_model(&app, id, &captions.cancel).await.map(|_| ());
     captions.busy.store(false, Ordering::SeqCst);
     result
 }
 
-/// Deletes the speech model to free disk space; captions download it again when next needed.
+/// Deletes a speech model (the chosen one if none is given) to free disk space; captions
+/// download it again when next needed.
 #[tauri::command]
-pub fn delete_caption_model(app: AppHandle, captions: State<'_, Captions>) -> Result<(), String> {
+pub fn delete_caption_model(app: AppHandle, captions: State<'_, Captions>, id: Option<String>) -> Result<(), String> {
     if captions.busy.load(Ordering::SeqCst) {
         return Err("The speech model is in use. Try again when captions are done.".into());
     }
-    match std::fs::remove_file(model_path(&app)?) {
+    let id = match id {
+        Some(id) => find_model(&id)?.0,
+        None => selected_model(&app),
+    };
+    match std::fs::remove_file(model_path(&app, id)?) {
         Err(e) if e.kind() != std::io::ErrorKind::NotFound => Err(e.to_string()),
         _ => Ok(()),
     }
