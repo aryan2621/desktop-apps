@@ -19,7 +19,7 @@ import {
 } from 'lucide-react';
 import { toast } from 'sonner';
 import { Button, Segmented, Select, Slider, Switch, cx } from '../components/ui';
-import { api, errorMessage } from '../lib/api';
+import { api, errorMessage, fileUrl } from '../lib/api';
 import { backgroundCss } from './render';
 import { MusicPanel } from './MusicPanel';
 import { HidePanel } from './HidePanel';
@@ -56,6 +56,9 @@ interface InspectorProps {
     onZoomDelete: (id: string) => void;
     onAutoZoom: () => void;
     onAddZoom: () => void;
+    /** Sets the recording's thumbnail from the preview's current frame, or from an image file. */
+    onThumbnailFromFrame: () => void;
+    onThumbnailFromFile: (file: File) => void;
     onApplyZoomScaleToAll: () => void;
     selectedText: TextOverlay | null;
     onAddText: () => void;
@@ -266,7 +269,7 @@ function ItemPanel({ title, onBack, onDelete, children }: { title: string; onBac
 
 // ---- Look ----
 
-function LookPanel({ edit, onChange, projectId, project }: InspectorProps) {
+function LookPanel({ edit, onChange, projectId, project, onThumbnailFromFrame, onThumbnailFromFile }: InspectorProps) {
     const background = edit.background;
     const input = useRef<HTMLInputElement>(null);
     const [busy, setBusy] = useState(false);
@@ -351,12 +354,64 @@ function LookPanel({ edit, onChange, projectId, project }: InspectorProps) {
                 )}
             </Section>
 
+            <ThumbnailSection project={project} version={edit.thumbnail} onFromFrame={onThumbnailFromFrame} onFromFile={onThumbnailFromFile} />
+
             <Section title='Frame'>
                 <Slider label='Padding' value={edit.padding} min={0} max={0.25} step={0.005} format={(v) => percent(v / 0.25)} onChange={(padding) => onChange({ padding }, 'padding')} />
                 <Slider label='Rounded corners' value={edit.radius} min={0} max={0.05} step={0.001} format={(v) => percent(v / 0.05)} onChange={(radius) => onChange({ radius }, 'radius')} />
                 <Slider label='Shadow' value={edit.shadow} min={0} max={1} step={0.05} format={percent} onChange={(shadow) => onChange({ shadow }, 'shadow')} />
             </Section>
         </div>
+    );
+}
+
+/** The recording's thumbnail: shown in the library, and sent with YouTube uploads when it's custom. */
+function ThumbnailSection({ project, version, onFromFrame, onFromFile }: { project: Project; version?: number; onFromFrame: () => void; onFromFile: (file: File) => void }) {
+    const input = useRef<HTMLInputElement>(null);
+    const [url, setUrl] = useState<string | null>(null);
+    // Read the file fresh (not from the cache), so a new thumbnail shows straight away.
+    useEffect(() => {
+        let objectUrl: string | null = null;
+        let cancelled = false;
+        fetch(fileUrl(project, 'thumb.jpg'), { cache: 'no-store' })
+            .then((response) => (response.ok ? response.blob() : null))
+            .then((blob) => {
+                if (cancelled || !blob) return;
+                objectUrl = URL.createObjectURL(blob);
+                setUrl(objectUrl);
+            })
+            .catch(() => {});
+        return () => {
+            cancelled = true;
+            if (objectUrl) URL.revokeObjectURL(objectUrl);
+        };
+    }, [project, version]);
+    return (
+        <Section icon={<ImageIcon className='h-3.5 w-3.5' />} title='Thumbnail'>
+            <div className='aspect-video w-full overflow-hidden rounded-lg border border-line bg-stage'>
+                {url && <img src={url} alt='' className='h-full w-full object-contain' draggable={false} />}
+            </div>
+            <div className='grid grid-cols-2 gap-2'>
+                <Button size='sm' onClick={onFromFrame} title='Use the frame on the preview, as it looks in the video'>
+                    Use current frame
+                </Button>
+                <Button size='sm' onClick={() => input.current?.click()}>
+                    <Upload className='h-3.5 w-3.5' /> Upload image
+                </Button>
+            </div>
+            <input
+                ref={input}
+                type='file'
+                accept='image/png,image/jpeg,image/webp,image/heic,.heic'
+                className='hidden'
+                onChange={(e) => {
+                    const file = e.target.files?.[0];
+                    if (file) onFromFile(file);
+                    e.target.value = '';
+                }}
+            />
+            <p className='text-xs text-muted'>{version ? 'Shown in your library and sent with YouTube uploads.' : 'Shown in your library. Set your own to also send it with YouTube uploads.'}</p>
+        </Section>
     );
 }
 

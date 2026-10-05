@@ -208,29 +208,36 @@ function makePoster(project: Project) {
     return job;
 }
 
-/** The recording's poster frame (thumb.jpg), made the first time it's needed. */
+/** The recording's thumbnail (thumb.jpg: custom, or a frame made the first time it's needed). */
 function Thumbnail({ project }: { project: Project }) {
-    const [url, setUrl] = useState(() => fileUrl(project, 'thumb.jpg'));
+    const [url, setUrl] = useState<string | null>(null);
     const [failed, setFailed] = useState(false);
+    // Read fresh rather than from the cache, so a thumbnail set in the editor shows here at once.
+    useEffect(() => {
+        let cancelled = false;
+        fetch(fileUrl(project, 'thumb.jpg'), { cache: 'no-store' })
+            .then((response) => (response.ok ? response.blob() : Promise.reject(new Error('no thumbnail'))))
+            .then(
+                (blob) => {
+                    if (!cancelled) setUrl(URL.createObjectURL(blob));
+                },
+                () => {
+                    if (!cancelled) makePoster(project).then(setUrl, () => setFailed(true));
+                }
+            );
+        return () => {
+            cancelled = true;
+        };
+    }, [project]);
     useEffect(
         () => () => {
-            if (url.startsWith('blob:')) URL.revokeObjectURL(url);
+            if (url?.startsWith('blob:')) URL.revokeObjectURL(url);
         },
         [url]
     );
     if (failed) return <Film className='absolute left-1/2 top-1/2 h-5 w-5 -translate-x-1/2 -translate-y-1/2 text-subtle' />;
-    return (
-        <img
-            src={url}
-            alt=''
-            draggable={false}
-            className='absolute inset-0 h-full w-full object-contain'
-            onError={() => {
-                if (url.startsWith('blob:')) setFailed(true);
-                else makePoster(project).then(setUrl, () => setFailed(true));
-            }}
-        />
-    );
+    if (!url) return null;
+    return <img src={url} alt='' draggable={false} className='absolute inset-0 h-full w-full object-contain' onError={() => setFailed(true)} />;
 }
 
 function TrackIcons({ project, className }: { project: Project; className?: string }) {

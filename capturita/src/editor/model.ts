@@ -31,6 +31,8 @@ export interface Edit {
     hides: HideRegion[];
     captions: Captions;
     audio: AudioMix;
+    /** When a custom thumbnail was set (thumb.jpg in the project), or absent for the automatic one. */
+    thumbnail?: number;
 }
 
 export type HideStyle = 'pixelate' | 'blur' | 'solid';

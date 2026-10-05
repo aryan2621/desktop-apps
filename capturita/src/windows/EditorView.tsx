@@ -308,6 +308,41 @@ export function EditorView({ project, onClose }: { project: Project; onClose: ()
     const setClips = useCallback((clips: Clip[], key?: string) => history.set((e) => ({ ...e, clips }), key), [history]);
     const change = useCallback((partial: Partial<Edit>, key: string) => history.set((e) => ({ ...e, ...partial }), key), [history]);
 
+    /** Saves a picture as the recording's thumbnail (thumb.jpg), as a JPEG at most 1280 px wide. */
+    const saveThumbnail = async (source: CanvasImageSource, width: number, height: number) => {
+        const scale = Math.min(1, 1280 / width);
+        const canvas = document.createElement('canvas');
+        canvas.width = Math.round(width * scale);
+        canvas.height = Math.round(height * scale);
+        const ctx = canvas.getContext('2d');
+        if (!ctx) return;
+        ctx.imageSmoothingQuality = 'high';
+        ctx.drawImage(source, 0, 0, canvas.width, canvas.height);
+        const blob = await new Promise<Blob | null>((resolve) => canvas.toBlob(resolve, 'image/jpeg', 0.88));
+        if (!blob) return;
+        try {
+            await api.saveThumbnail(project.id, blob);
+            change({ thumbnail: Date.now() }, 'thumbnail');
+            toast.success('Thumbnail set');
+        } catch (error) {
+            toast.error(errorMessage(error));
+        }
+    };
+    /** The frame on the preview, as it looks in the video (background, zoom and all). */
+    const thumbnailFromFrame = () => {
+        const canvas = canvasRef.current;
+        if (canvas) saveThumbnail(canvas, canvas.width, canvas.height);
+    };
+    const thumbnailFromFile = async (file: File) => {
+        try {
+            const image = await createImageBitmap(file);
+            await saveThumbnail(image, image.width, image.height);
+            image.close();
+        } catch {
+            toast.error('Choose an image (PNG, JPEG, WebP or HEIC)');
+        }
+    };
+
     const togglePlay = () => (playback.playing ? playback.pause() : playback.play(playback.now()));
 
     /** First press shows two markers around the playhead; the second cuts out what's between them. */
@@ -864,6 +899,8 @@ export function EditorView({ project, onClose }: { project: Project; onClose: ()
                         onZoomDelete={deleteZoom}
                         onAutoZoom={runAutoZoom}
                         onAddZoom={() => addZoom()}
+                        onThumbnailFromFrame={thumbnailFromFrame}
+                        onThumbnailFromFile={thumbnailFromFile}
                         onDeselect={() => select('clip', null)}
                         onApplyZoomScaleToAll={applyZoomScaleToAll}
                         selectedText={selectedText}

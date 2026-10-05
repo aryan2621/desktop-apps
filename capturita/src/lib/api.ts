@@ -154,6 +154,8 @@ export interface UploadRequest {
     title: string;
     description: string;
     privacy?: Privacy;
+    /** YouTube only: path of the recording's custom thumbnail (thumb.jpg). */
+    thumbnail?: string;
 }
 
 const helper = <T>(cmd: string, args?: Record<string, unknown>) => invoke<T>('recorder_request', { cmd, args });
@@ -229,7 +231,7 @@ export const api = {
     googleRemoveClient: () => invoke<void>('google_remove_client'),
     googleSignIn: (destination: Destination) => invoke<GoogleAccount>('google_sign_in', { destination }),
     googleSignOut: () => invoke<void>('google_sign_out'),
-    upload: (request: UploadRequest) => invoke<{ id: string; url: string }>('google_upload', { request }),
+    upload: (request: UploadRequest) => invoke<{ id: string; url: string; thumbnailError: string | null }>('google_upload', { request }),
     cancelUpload: () => invoke<void>('google_cancel_upload'),
 };
 

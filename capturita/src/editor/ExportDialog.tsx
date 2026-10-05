@@ -145,7 +145,9 @@ export function ExportDialog({ project, edit, cursor, onClose }: { project: Proj
                 title: title.trim() || project.source.name,
                 description,
                 privacy: destination === 'youtube' ? settings.privacy : undefined,
+                thumbnail: destination === 'youtube' && edit.thumbnail ? `${project.path}/thumb.jpg` : undefined,
             });
+            if (result.thumbnailError) toast.warning('Uploaded, but the thumbnail wasn’t set', { description: result.thumbnailError, duration: 10000 });
             setState({
                 status: 'done',
                 path,
