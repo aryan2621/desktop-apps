@@ -224,6 +224,18 @@ pub async fn download_caption_model(app: AppHandle, captions: State<'_, Captions
     result
 }
 
+/// Deletes the speech model to free disk space; captions download it again when next needed.
+#[tauri::command]
+pub fn delete_caption_model(app: AppHandle, captions: State<'_, Captions>) -> Result<(), String> {
+    if captions.busy.load(Ordering::SeqCst) {
+        return Err("The speech model is in use. Try again when captions are done.".into());
+    }
+    match std::fs::remove_file(model_path(&app)?) {
+        Err(e) if e.kind() != std::io::ErrorKind::NotFound => Err(e.to_string()),
+        _ => Ok(()),
+    }
+}
+
 #[tauri::command]
 pub fn cancel_transcription(captions: State<'_, Captions>) {
     captions.cancel.store(true, Ordering::SeqCst);

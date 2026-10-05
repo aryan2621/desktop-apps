@@ -5,8 +5,9 @@
 //! PKCE. The refresh token lives in the macOS Keychain; access tokens only in memory. Uploads use
 //! Google's resumable protocol, streaming the exported file from disk in chunks.
 //!
-//! The OAuth client comes from the user's own Google Cloud project: the "Desktop app" client
-//! JSON downloaded from the console, saved as `google-client.json` in the app's config folder.
+//! The OAuth client comes from the user's own Google Cloud project (a "Desktop app" client), so
+//! no shared secret ships with Capturita. Its Client ID and Client Secret are entered in Settings
+//! and kept in the Keychain next to the refresh token.
 
 use std::io::Read;
 use std::path::PathBuf;
@@ -33,7 +34,9 @@ const DRIVE_SCOPE: &str = "https://www.googleapis.com/auth/drive.file";
 const IDENTITY_SCOPES: [&str; 2] = ["openid", "email"];
 const KEYCHAIN_SERVICE: &str = "com.capturita.app.google";
 const KEYCHAIN_ACCOUNT: &str = "refresh-token";
-const CLIENT_FILE: &str = "google-client.json";
+const KEYCHAIN_CLIENT: &str = "oauth-client";
+/// Where the client used to be configured; imported into the Keychain once, then removed.
+const LEGACY_CLIENT_FILE: &str = "google-client.json";
 const ACCOUNT_FILE: &str = "google-account.json";
 const SIGN_IN_TIMEOUT: Duration = Duration::from_secs(300);
 /// Resumable uploads need chunks in multiples of 256 KiB.
@@ -56,7 +59,7 @@ impl Destination {
     }
 }
 
-#[derive(Clone, Deserialize)]
+#[derive(Clone, Serialize, Deserialize)]
 struct ClientConfig {
     client_id: String,
     client_secret: String,
@@ -81,7 +84,8 @@ pub struct Account {
 #[serde(rename_all = "camelCase")]
 pub struct GoogleStatus {
     configured: bool,
-    config_folder: String,
+    /// The start and end of the Client ID, to recognise which one is saved.
+    client_id_preview: String,
     account: Option<Account>,
 }
 
@@ -125,10 +129,33 @@ fn config_dir(app: &AppHandle) -> Result<PathBuf, String> {
 }
 
 fn client_config(app: &AppHandle) -> Result<ClientConfig, String> {
-    let path = config_dir(app)?.join(CLIENT_FILE);
-    let text = std::fs::read_to_string(&path).map_err(|_| "Google isn't set up yet: add google-client.json to Capturita's config folder.".to_string())?;
-    let file: ClientFile = serde_json::from_str(&text).map_err(|e| format!("google-client.json isn't valid: {e}"))?;
-    file.installed.or(file.flat).ok_or_else(|| "google-client.json has no client_id/client_secret".into())
+    if let Ok(bytes) = security_framework::passwords::get_generic_password(KEYCHAIN_SERVICE, KEYCHAIN_CLIENT) {
+        return serde_json::from_slice(&bytes).map_err(|e| format!("The saved Google client isn't valid: {e}"));
+    }
+    import_legacy_client(app).ok_or_else(|| "Add your Google Client ID and Client Secret in Settings → Google first.".into())
+}
+
+/// Moves a client from the old google-client.json into the Keychain, so the secret isn't left in a file.
+fn import_legacy_client(app: &AppHandle) -> Option<ClientConfig> {
+    let path = config_dir(app).ok()?.join(LEGACY_CLIENT_FILE);
+    let file: ClientFile = serde_json::from_str(&std::fs::read_to_string(&path).ok()?).ok()?;
+    let client = file.installed.or(file.flat)?;
+    save_client(&client).ok()?;
+    let _ = std::fs::remove_file(path);
+    Some(client)
+}
+
+fn save_client(client: &ClientConfig) -> Result<(), String> {
+    let bytes = serde_json::to_vec(client).map_err(|e| e.to_string())?;
+    security_framework::passwords::set_generic_password(KEYCHAIN_SERVICE, KEYCHAIN_CLIENT, &bytes).map_err(|e| format!("Couldn't save to the Keychain: {e}"))
+}
+
+fn preview(client_id: &str) -> String {
+    let id = client_id.trim_end_matches(".apps.googleusercontent.com");
+    if id.len() <= 12 {
+        return id.to_string();
+    }
+    format!("{}…{}", &id[..6], &id[id.len() - 4..])
 }
 
 fn load_account(app: &AppHandle) -> Option<Account> {
@@ -192,9 +219,10 @@ impl Google {
             .await
             .map_err(|e| format!("Couldn't reach Google: {e}"))?;
         if response.status() == StatusCode::BAD_REQUEST || response.status() == StatusCode::UNAUTHORIZED {
-            // The user revoked access or the token expired.
+            // The user revoked access, or the token expired: Google ends sign-ins after 7 days
+            // while a project is in Testing.
             forget_account(app, self);
-            return Err("Your Google sign-in has expired. Sign in again to upload.".into());
+            return Err("Google signed you out. Upload again to sign back in. If this happens every week, publish your Google project (Settings → Google, step 4).".into());
         }
         let token: TokenResponse = response.error_for_status().map_err(|e| e.to_string())?.json().await.map_err(|e| e.to_string())?;
         *self.access.lock().unwrap() = Some((token.access_token.clone(), Instant::now() + Duration::from_secs(token.expires_in)));
@@ -254,7 +282,7 @@ impl Google {
             .map_err(|e| format!("Couldn't reach Google: {e}"))?;
         if !response.status().is_success() {
             let body = response.text().await.unwrap_or_default();
-            return Err(format!("Google sign-in failed: {body}"));
+            return Err(sign_in_error(&body));
         }
         let token: TokenResponse = response.json().await.map_err(|e| e.to_string())?;
         if let Some(refresh) = &token.refresh_token {
@@ -424,7 +452,27 @@ async fn google_error(response: reqwest::Response) -> String {
         .or_else(|| body.pointer("/error_description"))
         .and_then(Value::as_str)
         .unwrap_or("unknown error");
+    let text = body.to_string();
+    // The mistakes people make while setting up their Google project, in words they can act on.
+    if text.contains("SERVICE_DISABLED") || text.contains("accessNotConfigured") {
+        let api = if message.contains("Drive") { "Google Drive API" } else { "YouTube Data API v3" };
+        return format!("The {api} isn't turned on in your Google project. Turn it on (Settings → Google, step 2), wait a minute, and try again.");
+    }
+    if text.contains("youtubeSignupRequired") {
+        return "This Google account has no YouTube channel yet. Create one at youtube.com, then upload again.".into();
+    }
+    if text.contains("quotaExceeded") || text.contains("uploadLimitExceeded") {
+        return "Google's daily upload limit for your project is used up. Try again tomorrow, or upload the MP4 in YouTube Studio.".into();
+    }
     format!("Google returned {status}: {message}")
+}
+
+/// Explains a failed sign-in code exchange (wrong secret, deleted client).
+fn sign_in_error(body: &str) -> String {
+    if body.contains("invalid_client") || body.contains("unauthorized_client") {
+        return "Google didn't accept your Client ID and Client Secret. Check they're from the same Desktop app client, and save them again in Settings → Google.".into();
+    }
+    format!("Google sign-in failed: {body}")
 }
 
 /// Waits for Google's redirect to the loopback server and returns the authorization code.
@@ -460,18 +508,37 @@ async fn wait_for_code(listener: tokio::net::TcpListener, state: &str) -> Result
 
 #[tauri::command]
 pub fn google_status(app: AppHandle) -> Result<GoogleStatus, String> {
+    let client = client_config(&app).ok();
     Ok(GoogleStatus {
-        configured: client_config(&app).is_ok(),
-        config_folder: config_dir(&app)?.to_string_lossy().into_owned(),
+        configured: client.is_some(),
+        client_id_preview: client.map(|c| preview(&c.client_id)).unwrap_or_default(),
         account: load_account(&app),
     })
 }
 
-/// Opens the folder where google-client.json goes.
+/// Saves the user's own OAuth client. A different client signs out: its tokens belong to the old one.
 #[tauri::command]
-pub fn google_open_config_folder(app: AppHandle) -> Result<(), String> {
-    let dir = config_dir(&app)?;
-    app.opener().open_path(dir.to_string_lossy(), None::<&str>).map_err(|e| e.to_string())
+pub async fn google_save_client(app: AppHandle, google: State<'_, Google>, client_id: String, client_secret: String) -> Result<(), String> {
+    let client = ClientConfig { client_id: client_id.trim().to_string(), client_secret: client_secret.trim().to_string() };
+    if !client.client_id.ends_with(".apps.googleusercontent.com") {
+        return Err("That doesn't look like a Google Client ID (it ends in .apps.googleusercontent.com).".into());
+    }
+    if client.client_secret.is_empty() {
+        return Err("Enter the Client Secret too.".into());
+    }
+    if client_config(&app).is_ok_and(|old| old.client_id != client.client_id) {
+        forget_account(&app, &google);
+    }
+    save_client(&client)
+}
+
+/// Removes the OAuth client, and with it the Google sign-in.
+#[tauri::command]
+pub async fn google_remove_client(app: AppHandle, google: State<'_, Google>) -> Result<(), String> {
+    forget_account(&app, &google);
+    let _ = std::fs::remove_file(config_dir(&app)?.join(LEGACY_CLIENT_FILE));
+    let _ = security_framework::passwords::delete_generic_password(KEYCHAIN_SERVICE, KEYCHAIN_CLIENT);
+    Ok(())
 }
 
 #[tauri::command]

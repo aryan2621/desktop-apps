@@ -17,7 +17,7 @@ type Size = 'sm' | 'md' | 'lg' | 'icon' | 'icon-sm';
 const variants: Record<Variant, string> = {
     primary: 'bg-accent text-accent-fg hover:bg-accent-hover shadow-sm',
     secondary: 'bg-panel-2 text-fg hover:bg-raised border border-line',
-    ghost: 'text-muted hover:text-fg hover:bg-panel-2',
+    ghost: 'text-muted hover:text-fg hover:bg-panel-2 disabled:hover:bg-transparent',
     subtle: 'bg-panel-2 text-fg hover:bg-raised',
     danger: 'bg-danger-soft text-danger-fg hover:bg-danger/25',
     record: 'bg-record text-white hover:bg-record-hover shadow-lg shadow-red-500/20',
@@ -36,7 +36,7 @@ export function Button({ variant = 'secondary', size = 'md', className, ...props
         <button
             className={cx(
                 'inline-flex shrink-0 cursor-default items-center justify-center gap-2 rounded-lg font-medium transition-colors',
-                'disabled:opacity-40 disabled:hover:bg-transparent',
+                'disabled:opacity-40',
                 variants[variant],
                 sizes[size],
                 className

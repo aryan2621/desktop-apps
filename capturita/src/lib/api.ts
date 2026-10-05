@@ -125,10 +125,27 @@ export interface GoogleAccount {
 }
 
 export interface GoogleStatus {
-    /** Whether google-client.json is in place. */
+    /** Whether a Client ID and Client Secret are saved (Settings → Google). */
     configured: boolean;
-    configFolder: string;
+    /** The start and end of the saved Client ID. */
+    clientIdPreview: string;
     account: GoogleAccount | null;
+}
+
+export interface AiModel {
+    id: string;
+    name: string;
+    note: string;
+    sizeMb: number;
+    minRamGb: number;
+    downloaded: boolean;
+}
+
+export interface AiModels {
+    models: AiModel[];
+    active: string;
+    downloading: string | null;
+    ramGb: number;
 }
 
 export interface UploadRequest {
@@ -168,9 +185,13 @@ export const api = {
     restart: () => invoke<void>('restart_app'),
     log: (message: string) => invoke<void>('log_debug', { message }).catch(() => {}),
 
-    aiModel: () => invoke<{ downloaded: boolean; sizeMb: number }>('ai_model_status'),
-    /** Downloads the AI editing model once (progress: `ai-progress` events, 0–1). */
-    downloadAiModel: () => invoke<void>('download_ai_model'),
+    /** The model AI editing uses now. */
+    aiModel: () => invoke<{ id: string; name: string; downloaded: boolean; sizeMb: number }>('ai_model_status'),
+    aiModels: () => invoke<AiModels>('ai_models'),
+    setAiModel: (id: string) => invoke<void>('set_ai_model', { id }),
+    deleteAiModel: (id: string) => invoke<void>('delete_ai_model', { id }),
+    /** Downloads an AI model once, the chosen one by default (progress: `ai-progress` events, 0–1). */
+    downloadAiModel: (id?: string) => invoke<void>('download_ai_model', { id }),
     cancelAiDownload: () => invoke<void>('cancel_ai_download'),
     captionModel: () => invoke<{ downloaded: boolean; sizeMb: number }>('caption_model_status'),
     /** Transcribes 16 kHz mono audio into timed words (progress: `captions-progress` events). */
@@ -179,11 +200,13 @@ export const api = {
     cancelTranscription: () => invoke<void>('cancel_transcription'),
     /** Downloads the speech model ahead of time (progress: `captions-progress` events). */
     downloadCaptionModel: () => invoke<void>('download_caption_model'),
+    deleteCaptionModel: () => invoke<void>('delete_caption_model'),
     /** Saves a text file in ~/Movies/Capturita/Exports; returns its path. */
     saveExportText: (name: string, extension: string, contents: string) => invoke<string>('save_export_text', { name, extension, contents }),
 
     googleStatus: () => invoke<GoogleStatus>('google_status'),
-    googleOpenConfigFolder: () => invoke<void>('google_open_config_folder'),
+    googleSaveClient: (clientId: string, clientSecret: string) => invoke<void>('google_save_client', { clientId, clientSecret }),
+    googleRemoveClient: () => invoke<void>('google_remove_client'),
     googleSignIn: (destination: Destination) => invoke<GoogleAccount>('google_sign_in', { destination }),
     googleSignOut: () => invoke<void>('google_sign_out'),
     upload: (request: UploadRequest) => invoke<{ id: string; url: string }>('google_upload', { request }),

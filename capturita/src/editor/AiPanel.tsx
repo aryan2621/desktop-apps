@@ -33,7 +33,7 @@ export function AiPanel({
     /** Jump to a source time. */
     onSeek: (source: number) => void;
 }) {
-    const [model, setModel] = useState<{ downloaded: boolean; sizeMb: number } | null>(null);
+    const [model, setModel] = useState<{ name: string; downloaded: boolean; sizeMb: number } | null>(null);
     const [download, setDownload] = useState<number | null>(null);
     const [prompt, setPrompt] = useState('');
     const [busy, setBusy] = useState<Busy>(null);
@@ -142,7 +142,7 @@ export function AiPanel({
                 {header}
                 <p className='text-xs text-muted'>
                     Describe an edit — “cut the part about pricing”, “add a title” — and the AI proposes it for you to check. It runs on this Mac; the model
-                    downloads once ({(model.sizeMb / 1000).toFixed(1)} GB).
+                    ({model.name}) downloads once ({(model.sizeMb / 1000).toFixed(1)} GB). Pick another in Settings.
                 </p>
                 {download === null ? (
                     <Button variant='primary' className='w-full' onClick={startDownload}>

@@ -9,6 +9,9 @@
     "core:default",
     "core:window:allow-start-dragging",
     "core:window:allow-set-theme",
+    "core:window:allow-show",
+    "core:window:allow-unminimize",
+    "core:window:allow-set-focus",
     "opener:default",
     "opener:allow-reveal-item-in-dir",
     {
