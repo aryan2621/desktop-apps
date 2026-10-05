@@ -136,12 +136,51 @@ function withHolds(moves: CursorData['moves']) {
     return out;
 }
 
+/** A wobble smaller than this (share of the recorded area, about 7 pt on a laptop screen)… */
+const SHAKE_SIZE = 0.004;
+/** …that goes out and comes back within this many seconds is hand shake, not movement. */
+const SHAKE_TIME = 0.1;
+
+/**
+ * Removes hand shake: a sample that jumps a tiny bit one way and straight back (A → B → C, with
+ * B close to both and C reversing the step) is dropped, so smoothing doesn't turn the jitter
+ * into a slow wobble. Deliberate moves are larger or keep their direction, and stay.
+ */
+function withoutShake(moves: CursorData['moves']) {
+    const out: CursorData['moves'] = [];
+    for (let i = 0; i < moves.length; i++) {
+        const a = out[out.length - 1];
+        const b = moves[i];
+        const c = moves[i + 1];
+        if (a && c && c[0] - a[0] < SHAKE_TIME) {
+            const abx = b[1] - a[1];
+            const aby = b[2] - a[2];
+            const bcx = c[1] - b[1];
+            const bcy = c[2] - b[2];
+            const small = Math.hypot(abx, aby) < SHAKE_SIZE && Math.hypot(bcx, bcy) < SHAKE_SIZE;
+            if (small && abx * bcx + aby * bcy < 0) continue;
+        }
+        out.push(b);
+    }
+    return out;
+}
+
 const holdsCache = new WeakMap<CursorData, CursorData['moves']>();
+const steadyCache = new WeakMap<CursorData, CursorData['moves']>();
 const cleanMoves = (data: CursorData) => {
     let moves = holdsCache.get(data);
     if (!moves) {
         moves = withHolds(data.moves);
         holdsCache.set(data, moves);
+    }
+    return moves;
+};
+/** The moves with pauses held and hand shake removed (what smoothed cursors follow). */
+const steadyMoves = (data: CursorData) => {
+    let moves = steadyCache.get(data);
+    if (!moves) {
+        moves = withHolds(withoutShake(data.moves));
+        steadyCache.set(data, moves);
     }
     return moves;
 };
@@ -158,9 +197,12 @@ function sampleIndex(moves: CursorData['moves'], t: number) {
     return low;
 }
 
-/** The recorded cursor at source time t (linear between samples, still during pauses). */
-export function cursorAt(data: CursorData, t: number) {
-    const moves = cleanMoves(data);
+/**
+ * The recorded cursor at source time t (linear between samples, still during pauses). `steady`
+ * leaves out hand shake, for the smoothed cursor.
+ */
+export function cursorAt(data: CursorData, t: number, steady = false) {
+    const moves = steady ? steadyMoves(data) : cleanMoves(data);
     if (moves.length === 0) return null;
     if (t <= moves[0][0]) return { x: moves[0][1], y: moves[0][2] };
     const low = sampleIndex(moves, t);
@@ -217,7 +259,7 @@ function buildCursorPath(data: CursorData, animation: Exclude<CursorAnimation, '
             x.step(upcoming.x, click);
             y.step(upcoming.y, click);
         } else {
-            const target = cursorAt(data, t + lead)!;
+            const target = cursorAt(data, t + lead, true)!;
             x.step(target.x, main);
             y.step(target.y, main);
         }
