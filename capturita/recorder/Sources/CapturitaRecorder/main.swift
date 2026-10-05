@@ -92,6 +92,9 @@ final class Controller {
             bar.set(.saving)
             defer { bar.hide() }
             return try await recorder.stop()
+        case "makePreview":
+            guard let dir = args.string("dir") else { throw RecorderError("Missing project folder") }
+            return try await PreviewMaker.make(projectDir: URL(fileURLWithPath: dir))
         case "cancel":
             bar.hide()
             await recorder.cancel()

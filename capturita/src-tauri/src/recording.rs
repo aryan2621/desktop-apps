@@ -385,6 +385,15 @@ pub fn import_background(app: AppHandle, request: tauri::ipc::Request<'_>) -> Re
     Ok(file)
 }
 
+/// Makes `screen-preview.mp4`, a 1080p copy of the screen video that the editor plays smoothly
+/// (exports still use the original). Returns its file name; quick if it already exists.
+#[tauri::command]
+pub async fn make_preview(app: AppHandle, helper: State<'_, Helper>, id: String) -> Result<String, String> {
+    let dir = project_dir(&app, &id)?;
+    let result = helper.call(&app, "makePreview", serde_json::json!({ "dir": dir.to_string_lossy() }), None).await?;
+    result.as_str().map(str::to_string).ok_or_else(|| "Unexpected reply while making the preview".into())
+}
+
 /// Saves the library poster frame (a small JPEG made by the webview) as `thumb.jpg` in the project.
 #[tauri::command]
 pub fn save_thumbnail(app: AppHandle, request: tauri::ipc::Request<'_>) -> Result<(), String> {

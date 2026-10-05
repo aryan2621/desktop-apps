@@ -58,6 +58,7 @@ pub fn run() {
             recording::import_music,
             recording::import_background,
             recording::save_thumbnail,
+            recording::make_preview,
             recording::recordings_dir,
             recording::restart_app,
             recording::log_debug,

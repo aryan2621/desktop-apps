@@ -184,6 +184,8 @@ export const api = {
     importBackground: async (id: string, file: File) =>
         invoke<string>('import_background', new Uint8Array(await file.arrayBuffer()), { headers: { id, name: encodeURIComponent(file.name) } }),
     saveThumbnail: (id: string, jpeg: Blob) => jpeg.arrayBuffer().then((bytes) => invoke<void>('save_thumbnail', new Uint8Array(bytes), { headers: { id } })),
+    /** File name of the 1080p preview copy of the screen video, made if needed. */
+    makePreview: (id: string) => invoke<string>('make_preview', { id }),
     copyFileToClipboard: (path: string) => invoke<void>('copy_file_to_clipboard', { path }),
     recordingsDir: () => invoke<string>('recordings_dir'),
     restart: () => invoke<void>('restart_app'),

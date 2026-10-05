@@ -72,6 +72,13 @@ export function EditorView({ project, onClose }: { project: Project; onClose: ()
     /** Output-time range marked for cutting (the two red markers), or null. */
     const [cutRange, setCutRange] = useState<[number, number] | null>(null);
     const [time, setTime] = useState(0);
+    /**
+     * The editor plays a 1080p copy of the screen video once it's made: full-size Retina
+     * recordings of busy content can be too heavy to decode in real time here, which freezes the
+     * preview. Exports always use the original.
+     */
+    const [previewFile, setPreviewFile] = useState<string | null>(null);
+    const [makingPreview, setMakingPreview] = useState(false);
     const [stage, setStage] = useState({ width: 0, height: 0 });
 
     const clickTimes = useMemo(() => cursor?.clicks.map(([t]) => t) ?? [], [cursor]);
@@ -141,6 +148,26 @@ export function EditorView({ project, onClose }: { project: Project; onClose: ()
         // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [project]);
 
+    useEffect(() => {
+        let cancelled = false;
+        const slow = setTimeout(() => !cancelled && setMakingPreview(true), 400);
+        api.makePreview(project.id)
+            .then((file) => !cancelled && setPreviewFile(file))
+            .catch((error) => api.log(`[editor ${project.id}] preview copy failed, playing the original: ${error}`))
+            .finally(() => {
+                clearTimeout(slow);
+                if (!cancelled) setMakingPreview(false);
+            });
+        return () => {
+            cancelled = true;
+            clearTimeout(slow);
+        };
+    }, [project.id]);
+    // When the video switches to the preview copy, put it back where playback is.
+    const onScreenLoaded = () => {
+        if (previewFile) playbackRef.current.seek(playbackRef.current.now());
+    };
+
     // A new recording starts with zooms around its clicks, like Screen Studio.
     useEffect(() => {
         if (!loaded || !cursor || !freshRef.current) return;
@@ -197,6 +224,10 @@ export function EditorView({ project, onClose }: { project: Project; onClose: ()
         let frame = 0;
         let previous = performance.now();
         let lastSlowLog = 0;
+        // Diagnostics: when the screen video stops advancing while playing.
+        let lastVideoTime = -1;
+        let videoStuckSince = 0;
+        let stuckLogged = false;
         const loop = () => {
             const playback = playbackRef.current;
             // Note stutters while playing, so a slow preview can be diagnosed from the app's log.
@@ -207,6 +238,21 @@ export function EditorView({ project, onClose }: { project: Project; onClose: ()
                 lastSlowLog = started;
                 const video = playback.screenRef.current;
                 api.log(`[preview] slow frame ${Math.round(gap)} ms at ${playback.now().toFixed(2)} s (video ${video?.currentTime.toFixed(2)}, seeking ${video?.seeking}, ready ${video?.readyState})`);
+            }
+            const screenVideo = playback.screenRef.current;
+            if (playback.playing && screenVideo) {
+                if (screenVideo.currentTime !== lastVideoTime) {
+                    if (stuckLogged) api.log(`[preview] video moving again at ${screenVideo.currentTime.toFixed(2)} after ${Math.round(started - videoStuckSince)} ms`);
+                    lastVideoTime = screenVideo.currentTime;
+                    videoStuckSince = started;
+                    stuckLogged = false;
+                } else if (!stuckLogged && started - videoStuckSince > 150) {
+                    stuckLogged = true;
+                    const buffered = Array.from({ length: screenVideo.buffered.length }, (_, i) => `${screenVideo.buffered.start(i).toFixed(1)}-${screenVideo.buffered.end(i).toFixed(1)}`).join(',');
+                    api.log(
+                        `[preview] video stuck at ${screenVideo.currentTime.toFixed(2)} (clock ${playback.now().toFixed(2)}, paused ${screenVideo.paused}, seeking ${screenVideo.seeking}, ready ${screenVideo.readyState}, network ${screenVideo.networkState}, buffered ${buffered}, rate ${screenVideo.playbackRate})`
+                    );
+                }
             }
             const t = playback.tick();
             timelineRef.current?.setPlayhead(t);
@@ -615,6 +661,11 @@ export function EditorView({ project, onClose }: { project: Project; onClose: ()
                                 />
                             )}
                         </div>
+                        {makingPreview && (
+                            <div className='absolute left-1/2 top-3 flex -translate-x-1/2 items-center gap-2 rounded-full bg-panel/90 px-3 py-1.5 text-xs text-muted shadow'>
+                                <Loader2 className='h-3.5 w-3.5 animate-spin' /> Preparing a smooth preview…
+                            </div>
+                        )}
                         {!playback.ready && (
                             <div className='absolute inset-0 flex items-center justify-center'>
                                 <Loader2 className='h-6 w-6 animate-spin text-muted' />
@@ -827,7 +878,7 @@ export function EditorView({ project, onClose }: { project: Project; onClose: ()
 
             {/* Frame sources for the canvas. Kept in the page (not display:none) so WebKit keeps decoding them. */}
             <div className='pointer-events-none fixed left-0 top-0 h-px w-px overflow-hidden opacity-0' aria-hidden>
-                <video ref={playback.screenRef} src={fileUrl(project, project.tracks.screen.file)} muted playsInline preload='auto' />
+                <video ref={playback.screenRef} src={fileUrl(project, previewFile ?? project.tracks.screen.file)} onLoadedData={onScreenLoaded} muted playsInline preload='auto' />
                 {project.tracks.camera && <video ref={playback.cameraRef} src={fileUrl(project, project.tracks.camera.file)} muted playsInline preload='auto' />}
             </div>
         </div>
