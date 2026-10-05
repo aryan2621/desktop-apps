@@ -5,7 +5,7 @@ import { toast } from 'sonner';
 import { api, errorMessage, type CaptionProgress, type CursorData, type Project } from '../lib/api';
 import { Button, cx } from '../components/ui';
 import { askAi, applyProposals, fillerCuts, pauseCuts, type Proposal } from './aiEdit';
-import { hasVoice, makeCaptions } from './captions';
+import { defaultCaptionSource, makeCaptions, speechSources } from './captions';
 import type { Edit } from './model';
 
 const EXAMPLES = ['Cut the part where I talk about pricing', 'Remove anything off-topic', 'Speed up the parts where nothing happens', 'Add a title at the start', 'Zoom in when I click'];
@@ -39,7 +39,7 @@ export function AiPanel({
     const [busy, setBusy] = useState<Busy>(null);
     const [result, setResult] = useState<{ summary: string; proposals: Proposal[] } | null>(null);
     const [chosen, setChosen] = useState<Set<string>>(new Set());
-    const hasSpeech = hasVoice(project);
+    const hasSpeech = speechSources(project).length > 0;
     const transcribed = edit.captions.items.length > 0;
 
     useEffect(() => {
@@ -73,7 +73,7 @@ export function AiPanel({
     const ensureTranscript = async (): Promise<Edit> => {
         if (transcribed) return edit;
         setBusy({ label: 'Reading what you said', progress: 0 });
-        const made = await makeCaptions(project, edit.captions.language);
+        const made = await makeCaptions(project, edit.captions.language, defaultCaptionSource(project));
         const next = { ...edit, captions: { ...edit.captions, items: made.items, fillers: made.fillers, visible: false } };
         onApply(next, 'ai-transcript');
         return next;
@@ -131,7 +131,7 @@ export function AiPanel({
         return (
             <section className='space-y-3'>
                 {header}
-                <p className='text-xs text-muted'>AI editing works from what you say, and this recording has no microphone. Turn the microphone on in the recorder next time.</p>
+                <p className='text-xs text-muted'>AI editing works from what's said in the recording, and this one has no sound.</p>
             </section>
         );
     }

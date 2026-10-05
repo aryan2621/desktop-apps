@@ -5,7 +5,7 @@ import { Captions as CaptionsIcon, FileDown, Highlighter, Loader2, RefreshCw, Tr
 import { toast } from 'sonner';
 import { api, errorMessage, type CaptionProgress, type Project } from '../lib/api';
 import { Button, Segmented, Select, Slider, Switch, cx } from '../components/ui';
-import { hasVoice, makeCaptions } from './captions';
+import { CAPTION_SOURCES, defaultCaptionSource, makeCaptions, speechSources, type CaptionSource } from './captions';
 import { FONTS, fontStack, retimeCaption, toSrt, type Caption, type CaptionBackground, type Captions, type Clip, type FontKey } from './model';
 
 const LANGUAGES: [string, string][] = [
@@ -64,6 +64,8 @@ export function CaptionsPanel({
 }) {
     const [progress, setProgress] = useState<CaptionProgress | null>(null);
     const [modelMb, setModelMb] = useState<number | null>(null);
+    const available = speechSources(project);
+    const [source, setSource] = useState<CaptionSource>(() => defaultCaptionSource(project));
     /** Redo shows the caption settings again before replacing the current captions. */
     const [redoing, setRedoing] = useState(false);
     const listRef = useRef<HTMLDivElement>(null);
@@ -90,7 +92,7 @@ export function CaptionsPanel({
         setRedoing(false);
         setProgress({ phase: modelMb ? 'download' : 'load', progress: 0 });
         try {
-            const made = await makeCaptions(project, captions.language);
+            const made = await makeCaptions(project, captions.language, source);
             onChange({ ...captions, items: made.items, fillers: made.fillers, visible: true }, 'captions-generate');
             setModelMb(null);
             toast.success(made.items.length ? `${made.items.length} captions made — check them below` : 'No speech found in this recording');
@@ -125,11 +127,11 @@ export function CaptionsPanel({
         </h3>
     );
 
-    if (!hasVoice(project)) {
+    if (available.length === 0) {
         return (
             <section className='space-y-3'>
                 {header}
-                <p className='text-xs text-muted'>Captions are made from your voice, and this recording has no microphone. Turn the microphone on in the recorder next time.</p>
+                <p className='text-xs text-muted'>This recording has no sound, so there's nothing to caption. Turn the microphone (or Mac audio) on in the recorder next time.</p>
             </section>
         );
     }
@@ -177,6 +179,18 @@ export function CaptionsPanel({
                         ))}
                     </Select>
                 </label>
+                {available.length > 1 && (
+                    <label className='block space-y-1'>
+                        <span className='text-xs text-muted'>Caption what</span>
+                        <Select value={source} onChange={(e) => setSource(e.target.value as CaptionSource)}>
+                            {CAPTION_SOURCES.map((option) => (
+                                <option key={option.value} value={option.value}>
+                                    {option.label}
+                                </option>
+                            ))}
+                        </Select>
+                    </label>
+                )}
                 <div className='flex gap-2'>
                     {redoing && (
                         <Button variant='ghost' onClick={() => setRedoing(false)}>
