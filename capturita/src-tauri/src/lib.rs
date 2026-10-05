@@ -76,6 +76,7 @@ pub fn run() {
             export::export_open,
             export::export_write,
             export::export_close,
+            export::copy_file_to_clipboard,
             google::google_status,
             google::google_save_client,
             google::google_remove_client,

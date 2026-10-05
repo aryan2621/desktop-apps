@@ -8,6 +8,9 @@ import {
     Mp4OutputFormat,
     Output,
     QUALITY_HIGH,
+    QUALITY_LOW,
+    QUALITY_MEDIUM,
+    QUALITY_VERY_HIGH,
     StreamTarget,
     UrlSource,
     VideoSampleSink,
@@ -19,14 +22,22 @@ import { loadAudioTracks, loadMusic, scheduleTimeline } from './audioSchedule';
 import { loadClickSound } from './clickSound';
 import { aspectRatio, positionAt, totalDuration, type Edit } from './model';
 import { drawFrame, preloadBackground, type FrameSource } from './render';
+import { GifEncoder } from './gif';
 
-export type Resolution = 720 | 1080 | 2160;
+export type Resolution = 480 | 720 | 1080 | 2160;
+export type Quality = 'studio' | 'high' | 'medium' | 'small';
+export type ExportFormat = 'mp4' | 'gif';
 
 export interface ExportSettings {
+    format: ExportFormat;
     /** Pixel size of the frame's shorter side. */
     resolution: Resolution;
-    fps: 30 | 60;
+    fps: 15 | 24 | 30 | 60;
+    /** Video bitrate (MP4 only). */
+    quality: Quality;
 }
+
+const BITRATES = { studio: QUALITY_VERY_HIGH, high: QUALITY_HIGH, medium: QUALITY_MEDIUM, small: QUALITY_LOW } as const;
 
 export interface ExportProgress {
     phase: 'audio' | 'video' | 'finishing';
@@ -84,36 +95,51 @@ export async function exportVideo(options: {
     const checkCancelled = () => {
         if (signal.aborted) throw new ExportCancelled();
     };
+    const gif = settings.format === 'gif';
 
-    const path = await invoke<string>('export_open', { name: options.fileName?.trim().replace(/\.mp4$/i, '').trim() || defaultExportName(project) });
+    const path = await invoke<string>('export_open', {
+        name: options.fileName?.trim().replace(/\.(mp4|gif)$/i, '').trim() || defaultExportName(project),
+        ext: settings.format,
+    });
     const inputs: Input[] = [];
     let output: Output | null = null;
 
     try {
-        // 1. Mix the audio offline.
+        // 1. Mix the audio offline (GIFs are silent).
         onProgress({ phase: 'audio', progress: 0 });
-        const mixed = await renderAudio(project, edit, cursor, total);
+        const mixed = gif ? null : await renderAudio(project, edit, cursor, total);
         checkCancelled();
 
-        // 2. Set up the MP4 file, streamed to disk in chunks.
-        const writable = new WritableStream<StreamTargetChunk>({
-            write: (chunk) => invoke('export_write', chunk.data, { headers: { position: String(chunk.position) } }),
-        });
-        output = new Output({
-            format: new Mp4OutputFormat({ fastStart: false }),
-            target: new StreamTarget(writable, { chunked: true, chunkSize: WRITE_CHUNK }),
-        });
+        // 2. Set up the MP4 (or GIF) file, streamed to disk in chunks.
         const canvas = document.createElement('canvas');
         canvas.width = width;
         canvas.height = height;
-        const ctx = canvas.getContext('2d');
+        const ctx = canvas.getContext('2d', { willReadFrequently: gif });
         if (!ctx) throw new Error('Could not create a drawing surface for the export');
         await preloadBackground(project, edit.background);
-        const videoSource = new CanvasSource(canvas, { codec: 'avc', bitrate: QUALITY_HIGH });
-        output.addVideoTrack(videoSource, { frameRate: settings.fps });
-        const audioSource = mixed ? new AudioBufferSource({ codec: 'aac', bitrate: AUDIO_BITRATE }) : null;
-        if (audioSource) output.addAudioTrack(audioSource);
-        await output.start();
+        let videoSource: CanvasSource | null = null;
+        let audioSource: AudioBufferSource | null = null;
+        let gifEncoder: GifEncoder | null = null;
+        if (gif) {
+            let position = 0;
+            gifEncoder = new GifEncoder(width, height, async (bytes) => {
+                await invoke('export_write', bytes, { headers: { position: String(position) } });
+                position += bytes.length;
+            });
+        } else {
+            const writable = new WritableStream<StreamTargetChunk>({
+                write: (chunk) => invoke('export_write', chunk.data, { headers: { position: String(chunk.position) } }),
+            });
+            output = new Output({
+                format: new Mp4OutputFormat({ fastStart: false }),
+                target: new StreamTarget(writable, { chunked: true, chunkSize: WRITE_CHUNK }),
+            });
+            videoSource = new CanvasSource(canvas, { codec: 'avc', bitrate: BITRATES[settings.quality] ?? QUALITY_HIGH });
+            output.addVideoTrack(videoSource, { frameRate: settings.fps });
+            audioSource = mixed ? new AudioBufferSource({ codec: 'aac', bitrate: AUDIO_BITRATE }) : null;
+            if (audioSource) output.addAudioTrack(audioSource);
+            await output.start();
+        }
 
         // 3. Decoders for the screen and camera tracks.
         // Read the recording in ranges; if that fails, fall back to loading the whole file.
@@ -188,7 +214,8 @@ export async function exportVideo(options: {
                     cursor,
                     time: positions[i],
                 });
-                await videoSource.add(time, 1 / settings.fps);
+                if (gifEncoder) await gifEncoder.addFrame(ctx.getImageData(0, 0, width, height).data, 1 / settings.fps);
+                else await videoSource!.add(time, 1 / settings.fps);
             } finally {
                 screenSample?.close();
                 cameraSample?.close();
@@ -199,7 +226,8 @@ export async function exportVideo(options: {
 
         // 5. Finish the file.
         onProgress({ phase: 'finishing', progress: 1 });
-        await output.finalize();
+        if (gifEncoder) await gifEncoder.finish();
+        else await output!.finalize();
         await invoke('export_close', { keep: true });
         return path;
     } catch (error) {

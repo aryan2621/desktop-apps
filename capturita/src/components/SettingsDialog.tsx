@@ -22,7 +22,7 @@ import {
 import { toast } from 'sonner';
 import { api, errorMessage, type AiModels, type CaptionProgress, type GoogleStatus } from '../lib/api';
 import { useTheme, type ThemeChoice } from '../lib/theme';
-import { Button, IconButton, Segmented, cx } from './ui';
+import { Button, IconButton, Modal, ProgressBar, Segmented, cx } from './ui';
 
 export type SettingsSection = 'general' | 'ai' | 'captions' | 'google';
 
@@ -47,55 +47,39 @@ export function SettingsDialog({
 }) {
     const [section, setSection] = useState<SettingsSection>(initialSection);
 
-    useEffect(() => {
-        const onKey = (event: KeyboardEvent) => {
-            if (event.key === 'Escape') {
-                event.stopPropagation();
-                onClose();
-            }
-        };
-        document.addEventListener('keydown', onKey, true);
-        return () => document.removeEventListener('keydown', onKey, true);
-    }, [onClose]);
-
     return (
-        <div
-            className='fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-6 backdrop-blur-sm'
-            onPointerDown={(e) => e.target === e.currentTarget && onClose()}
-        >
-            <div className='flex h-[560px] max-h-full w-full max-w-[760px] overflow-hidden rounded-2xl border border-line bg-panel shadow-[var(--shadow-lg)]'>
-                <nav className='flex w-48 shrink-0 flex-col gap-1 border-r border-line bg-panel-2 p-3'>
-                    <span className='px-2 pb-3 pt-1 font-serif text-[17px] font-medium tracking-tight'>Settings</span>
-                    {SECTIONS.map((s) => (
-                        <button
-                            key={s.id}
-                            onClick={() => setSection(s.id)}
-                            className={cx(
-                                'flex cursor-default items-center gap-2.5 rounded-lg px-2.5 py-2 text-left text-sm transition-colors',
-                                section === s.id ? 'bg-raised font-medium text-fg' : 'text-muted hover:bg-raised/60 hover:text-fg'
-                            )}
-                        >
-                            {s.icon}
-                            {s.label}
-                        </button>
-                    ))}
-                </nav>
-                <div className='flex min-w-0 flex-1 flex-col'>
-                    <div className='flex items-center justify-between border-b border-line px-6 py-3.5'>
-                        <h2 className='text-sm font-medium'>{SECTIONS.find((s) => s.id === section)?.label}</h2>
-                        <IconButton label='Close settings' size='icon-sm' onClick={onClose}>
-                            <X className='h-4 w-4' />
-                        </IconButton>
-                    </div>
-                    <div className='min-h-0 flex-1 overflow-y-auto p-6'>
-                        {section === 'general' && <General onRunSetup={onRunSetup} />}
-                        {section === 'ai' && <AiModelsSection />}
-                        {section === 'captions' && <CaptionsSection />}
-                        {section === 'google' && <GoogleSection />}
-                    </div>
+        <Modal onClose={onClose} className='flex h-[560px] max-w-[760px]'>
+            <nav className='flex w-48 shrink-0 flex-col gap-1 border-r border-line bg-panel-2 p-3'>
+                <span className='px-2 pb-3 pt-1 font-serif text-[17px] font-medium tracking-tight'>Settings</span>
+                {SECTIONS.map((s) => (
+                    <button
+                        key={s.id}
+                        onClick={() => setSection(s.id)}
+                        className={cx(
+                            'flex cursor-default items-center gap-2.5 rounded-lg px-2.5 py-2 text-left text-sm transition-colors',
+                            section === s.id ? 'bg-raised font-medium text-fg' : 'text-muted hover:bg-raised/60 hover:text-fg'
+                        )}
+                    >
+                        {s.icon}
+                        {s.label}
+                    </button>
+                ))}
+            </nav>
+            <div className='flex min-w-0 flex-1 flex-col'>
+                <div className='flex items-center justify-between border-b border-line px-6 py-3.5'>
+                    <h2 className='text-sm font-medium'>{SECTIONS.find((s) => s.id === section)?.label}</h2>
+                    <IconButton label='Close settings' size='icon-sm' onClick={onClose}>
+                        <X className='h-4 w-4' />
+                    </IconButton>
+                </div>
+                <div className='min-h-0 flex-1 overflow-y-auto p-6'>
+                    {section === 'general' && <General onRunSetup={onRunSetup} />}
+                    {section === 'ai' && <AiModelsSection />}
+                    {section === 'captions' && <CaptionsSection />}
+                    {section === 'google' && <GoogleSection />}
                 </div>
             </div>
-        </div>
+        </Modal>
     );
 }
 
@@ -111,16 +95,7 @@ function Row({ title, description, children }: { title: string; description?: Re
     );
 }
 
-function Progress({ value }: { value: number }) {
-    return (
-        <div className='flex items-center gap-2'>
-            <div className='h-1.5 flex-1 overflow-hidden rounded-full bg-line'>
-                <div className='h-full bg-accent transition-[width]' style={{ width: `${Math.round(value * 100)}%` }} />
-            </div>
-            <span className='w-9 text-right font-mono text-xs text-muted'>{Math.round(value * 100)}%</span>
-        </div>
-    );
-}
+const Progress = ProgressBar;
 
 function General({ onRunSetup }: { onRunSetup?: () => void }) {
     const { choice, setChoice } = useTheme();
@@ -359,7 +334,7 @@ function CaptionsSection() {
 const GUIDE_URL = 'https://github.com/aryan2621/desktop-apps/blob/main/capturita/docs/google-setup.md';
 
 /** Uploads use the user's own Google Cloud client; the steps to make one live in the guide. */
-function GoogleSection() {
+export function GoogleSection() {
     const [status, setStatus] = useState<GoogleStatus | null>(null);
     const [clientId, setClientId] = useState('');
     const [clientSecret, setClientSecret] = useState('');
