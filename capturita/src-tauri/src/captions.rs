@@ -90,19 +90,22 @@ async fn ensure_model(app: &AppHandle, cancel: &AtomicBool) -> Result<PathBuf, S
     Ok(path)
 }
 
-/// Whisper hears 30 seconds at a time; windows are cut a little shorter, at a quiet moment.
-const WINDOW: f32 = 28.0;
-/// The cut is placed at the quietest point in the last part of a window.
-const CUT_SEARCH: f32 = 8.0;
+/// Whisper hears up to 30 seconds at a time, but on long stretches of non-English speech over
+/// music it tends to give up partway and skip ahead. Windows of about 15 seconds, cut at a quiet
+/// moment, keep it on track.
+const WINDOW: f32 = 15.0;
+/// A stretch of speech longer than a window is cut at the quietest point in its last few seconds.
+const CUT_SEARCH: f32 = 5.0;
 /// Words Whisper itself rates as likely "not speech" are dropped.
 const NO_SPEECH: f32 = 0.8;
 
-/// Splits the audio into windows of at most WINDOW seconds, cut where it's quietest, so no word
-/// is chopped in half. Returns sample ranges.
+/// Splits the audio into windows of at most WINDOW seconds, cut where it's quietest so no word
+/// is chopped in half, and trimmed to where there's sound: Whisper invents words like
+/// "Thank you." for silence at the start or end of a window. Returns sample ranges.
 fn windows(samples: &[f32]) -> Vec<(usize, usize)> {
     let rate = SAMPLE_RATE as f32;
     let total = samples.len() as f32 / rate;
-    let mut ranges = Vec::new();
+    let mut cuts = vec![0.0f32];
     let mut start = 0.0f32;
     while total - start > WINDOW {
         let from = start + WINDOW - CUT_SEARCH;
@@ -118,11 +121,39 @@ fn windows(samples: &[f32]) -> Vec<(usize, usize)> {
             }
             t += 0.05;
         }
-        ranges.push(((start * rate) as usize, (cut * rate) as usize));
+        cuts.push(cut);
         start = cut;
     }
-    ranges.push(((start * rate) as usize, samples.len()));
-    ranges
+    cuts.push(total);
+    cuts.windows(2).filter_map(|w| trim_to_sound(samples, w[0], w[1])).collect()
+}
+
+/// The part of from..to between the first and last sound (with a little margin), or None if
+/// there's less than MIN_SOUND of it: a click or a bump on the mic isn't speech, and Whisper
+/// would caption it "Thank you.". A sound is a 50 ms frame clearly above the noise floor.
+fn trim_to_sound(samples: &[f32], from: f32, to: f32) -> Option<(usize, usize)> {
+    const FRAME: f32 = 0.05;
+    const MARGIN: f32 = 0.3;
+    const MIN_SOUND: usize = 6;
+    let mut count = 0;
+    let loud = |t: f32| rms(samples, t, t + FRAME) >= SILENCE_RMS * 4.0;
+    let mut first = None;
+    let mut last = None;
+    let mut t = from;
+    while t + FRAME <= to {
+        if loud(t) {
+            count += 1;
+            first.get_or_insert(t);
+            last = Some(t + FRAME);
+        }
+        t += FRAME;
+    }
+    if count < MIN_SOUND {
+        return None;
+    }
+    let (first, last) = (first?, last?);
+    let rate = SAMPLE_RATE as f32;
+    Some((((first - MARGIN).max(from) * rate) as usize, ((last + MARGIN).min(to) * rate) as usize))
 }
 
 /// Runs Whisper over the audio and returns every word with its timing.
@@ -130,9 +161,12 @@ fn windows(samples: &[f32]) -> Vec<(usize, usize)> {
 /// The audio goes through in windows of about 30 seconds, each a separate pass. With "auto",
 /// every window detects its own language: a recording can start in English and go on in Hindi
 /// (a narrated video, a call), and forcing one language on all of it makes Whisper invent text.
-fn transcribe_words(app: AppHandle, model: PathBuf, audio: Vec<f32>, language: String, cancel: Arc<AtomicBool>) -> Result<Vec<Word>, String> {
+/// Reports progress: a phase ("load", "transcribe") and 0..1.
+pub type Report = Arc<dyn Fn(&str, f32) + Send + Sync>;
+
+pub fn transcribe_words(report: Report, model: PathBuf, audio: Vec<f32>, language: String, cancel: Arc<AtomicBool>) -> Result<Vec<Word>, String> {
     whisper_rs::install_logging_hooks();
-    progress(&app, "load", 0.0);
+    report("load", 0.0);
     let ctx = WhisperContext::new_with_params(&model, WhisperContextParameters::default()).map_err(|e| format!("Could not load the speech model: {e}"))?;
     let mut state = ctx.create_state().map_err(|e| e.to_string())?;
     let language = if language.is_empty() { "auto".to_string() } else { language };
@@ -140,7 +174,7 @@ fn transcribe_words(app: AppHandle, model: PathBuf, audio: Vec<f32>, language: S
     let ranges = windows(&audio);
     let count = ranges.len();
     let mut words = Vec::new();
-    progress(&app, "transcribe", 0.0);
+    report("transcribe", 0.0);
     for (index, &(a, b)) in ranges.iter().enumerate() {
         if cancel.load(Ordering::SeqCst) {
             return Err("Cancelled".into());
@@ -149,11 +183,12 @@ fn transcribe_words(app: AppHandle, model: PathBuf, audio: Vec<f32>, language: S
         let window = &audio[a..b];
         // Nothing to hear: skip the pass (and the text Whisper would invent for silence).
         if rms(window, 0.0, window.len() as f32 / SAMPLE_RATE as f32) < SILENCE_RMS {
-            progress(&app, "transcribe", (index + 1) as f32 / count as f32);
+            report("transcribe", (index + 1) as f32 / count as f32);
             continue;
         }
 
-        let mut params = FullParams::new(SamplingStrategy::Greedy { best_of: 1 });
+        // Beam search: slower than greedy, but far more reliable on accents, mixed languages and music.
+        let mut params = FullParams::new(SamplingStrategy::BeamSearch { beam_size: 5, patience: -1.0 });
         params.set_language(Some(&language));
         params.set_translate(false);
         params.set_n_threads(std::thread::available_parallelism().map(|n| n.get().min(8) as i32).unwrap_or(4));
@@ -161,16 +196,14 @@ fn transcribe_words(app: AppHandle, model: PathBuf, audio: Vec<f32>, language: S
         params.set_no_context(true);
         params.set_suppress_blank(true);
         params.set_no_speech_thold(0.6);
-        // One segment per word, each with its own start and end.
+        // Start and end of every token, to time each word.
         params.set_token_timestamps(true);
-        params.set_max_len(1);
-        params.set_split_on_word(true);
         params.set_print_special(false);
         params.set_print_progress(false);
         params.set_print_realtime(false);
         params.set_print_timestamps(false);
-        let progress_app = app.clone();
-        params.set_progress_callback_safe(move |percent: i32| progress(&progress_app, "transcribe", (index as f32 + percent as f32 / 100.0) / count as f32));
+        let window_report = report.clone();
+        params.set_progress_callback_safe(move |percent: i32| window_report("transcribe", (index as f32 + percent as f32 / 100.0) / count as f32));
         let abort = cancel.clone();
         // Passed as a boxed closure: that's the type whisper-rs reads the callback back as.
         let abort_callback: Box<dyn FnMut() -> bool> = Box::new(move || abort.load(Ordering::SeqCst));
@@ -188,22 +221,50 @@ fn transcribe_words(app: AppHandle, model: PathBuf, audio: Vec<f32>, language: S
             return Err("Cancelled".into());
         }
 
+        let eot = ctx.token_eot();
         for segment in state.as_iter() {
-            let text = segment.to_str_lossy().map_err(|e| e.to_string())?.trim().to_string();
-            // Skip empty pieces and Whisper's sound tags like "[BLANK_AUDIO]" or "(music)".
-            if text.is_empty() || text.starts_with('[') || text.starts_with('(') {
+            // Beam search sometimes emits a zero-length partial copy of the next line; skip it.
+            if segment.no_speech_probability() > NO_SPEECH || segment.end_timestamp() <= segment.start_timestamp() {
                 continue;
             }
-            if segment.no_speech_probability() > NO_SPEECH {
-                continue;
+            // Words are built from the tokens' raw bytes and only then turned into text: a letter
+            // in Hindi (or any non-Latin script) is often split across two tokens, and decoding
+            // tokens one by one turns it into "�". A token starting with a space begins a word.
+            let mut word: Vec<u8> = Vec::new();
+            let mut word_start = 0.0f32;
+            let mut word_end = 0.0f32;
+            let flush = |bytes: &mut Vec<u8>, start: f32, end: f32, words: &mut Vec<Word>| {
+                let text = String::from_utf8_lossy(bytes).trim().to_string();
+                bytes.clear();
+                // Skip empty pieces and Whisper's sound tags like "[BLANK_AUDIO]" or "(music)".
+                if text.is_empty() || text.starts_with('[') || text.starts_with('(') {
+                    return;
+                }
+                let end = end.max(start + 0.05);
+                if rms(&input, start - 0.2, end + 0.2) < SILENCE_RMS {
+                    return;
+                }
+                let (start, end) = tighten(&input, start, end);
+                words.push(Word { start: start + offset, end: end + offset, text });
+            };
+            for i in 0..segment.n_tokens() {
+                let Some(token) = segment.get_token(i) else { continue };
+                let data = token.token_data();
+                // Timestamps, language and other special tokens aren't words.
+                if data.id >= eot {
+                    continue;
+                }
+                let Ok(bytes) = token.to_bytes() else { continue };
+                if bytes.first() == Some(&b' ') && !word.is_empty() {
+                    flush(&mut word, word_start, word_end, &mut words);
+                }
+                if word.is_empty() {
+                    word_start = data.t0 as f32 / 100.0;
+                }
+                word.extend_from_slice(bytes);
+                word_end = data.t1 as f32 / 100.0;
             }
-            let start = segment.start_timestamp() as f32 / 100.0;
-            let end = (segment.end_timestamp() as f32 / 100.0).max(start + 0.05);
-            if rms(&input, start - 0.2, end + 0.2) < SILENCE_RMS {
-                continue;
-            }
-            let (start, end) = tighten(&input, start, end);
-            words.push(Word { start: start + offset, end: end + offset, text });
+            flush(&mut word, word_start, word_end, &mut words);
         }
     }
     Ok(words)
@@ -262,7 +323,7 @@ pub async fn transcribe(app: AppHandle, captions: State<'_, Captions>, request: 
     let result = async {
         let model = ensure_model(&app, &cancel).await?;
         let app = app.clone();
-        tauri::async_runtime::spawn_blocking(move || transcribe_words(app, model, audio, language, cancel))
+        tauri::async_runtime::spawn_blocking(move || transcribe_words(Arc::new(move |phase: &str, value: f32| progress(&app, phase, value)), model, audio, language, cancel))
             .await
             .map_err(|e| e.to_string())?
     }

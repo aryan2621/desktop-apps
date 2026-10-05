@@ -5,8 +5,7 @@ import { Captions as CaptionsIcon, FileDown, Highlighter, Loader2, RefreshCw, Tr
 import { toast } from 'sonner';
 import { api, errorMessage, type CaptionProgress, type Project } from '../lib/api';
 import { Button, Segmented, Select, Slider, Switch, cx } from '../components/ui';
-import type { TrackKind } from './audioSchedule';
-import { makeCaptions, speechSources } from './captions';
+import { hasVoice, makeCaptions } from './captions';
 import { FONTS, fontStack, retimeCaption, toSrt, type Caption, type CaptionBackground, type Captions, type Clip, type FontKey } from './model';
 
 const LANGUAGES: [string, string][] = [
@@ -33,8 +32,6 @@ const LANGUAGES: [string, string][] = [
 const COLORS = ['#ffffff', '#ffd200', '#111111', '#38ef7d', '#7cc4ff'];
 const HIGHLIGHTS = ['#ffd200', '#38ef7d', '#ff5c7a', '#7cc4ff'];
 
-type Sources = 'microphone' | 'system' | 'both';
-const sourceKinds = (s: Sources): TrackKind[] => (s === 'both' ? ['microphone', 'system'] : [s]);
 
 const PHASE_LABEL: Record<CaptionProgress['phase'], string> = {
     download: 'Downloading the speech model (one time)',
@@ -65,9 +62,6 @@ export function CaptionsPanel({
     /** Jump to a source time. */
     onSeek: (source: number) => void;
 }) {
-    const available = speechSources(project);
-    // Your voice by default: system audio often has music or a video playing, which isn't what you said.
-    const [sources, setSources] = useState<Sources>(available[0] ?? 'microphone');
     const [progress, setProgress] = useState<CaptionProgress | null>(null);
     const [modelMb, setModelMb] = useState<number | null>(null);
     /** Redo shows the caption settings again before replacing the current captions. */
@@ -96,7 +90,7 @@ export function CaptionsPanel({
         setRedoing(false);
         setProgress({ phase: modelMb ? 'download' : 'load', progress: 0 });
         try {
-            const made = await makeCaptions(project, captions.language, sourceKinds(sources));
+            const made = await makeCaptions(project, captions.language);
             onChange({ ...captions, items: made.items, fillers: made.fillers, visible: true }, 'captions-generate');
             setModelMb(null);
             toast.success(made.items.length ? `${made.items.length} captions made — check them below` : 'No speech found in this recording');
@@ -131,11 +125,11 @@ export function CaptionsPanel({
         </h3>
     );
 
-    if (available.length === 0) {
+    if (!hasVoice(project)) {
         return (
             <section className='space-y-3'>
                 {header}
-                <p className='text-xs text-muted'>This recording has no sound, so there's nothing to caption. Record with your microphone or system audio on.</p>
+                <p className='text-xs text-muted'>Captions are made from your voice, and this recording has no microphone. Turn the microphone on in the recorder next time.</p>
             </section>
         );
     }
@@ -183,16 +177,6 @@ export function CaptionsPanel({
                         ))}
                     </Select>
                 </label>
-                {available.length > 1 && (
-                    <label className='block space-y-1'>
-                        <span className='text-xs text-muted'>Whose voice</span>
-                        <Select value={sources} onChange={(e) => setSources(e.target.value as Sources)}>
-                            <option value='microphone'>Microphone only (you)</option>
-                            <option value='both'>Microphone and system audio</option>
-                            <option value='system'>System audio only (calls, videos)</option>
-                        </Select>
-                    </label>
-                )}
                 <div className='flex gap-2'>
                     {redoing && (
                         <Button variant='ghost' onClick={() => setRedoing(false)}>
