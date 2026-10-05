@@ -168,6 +168,17 @@ export function EditorView({ project, onClose }: { project: Project; onClose: ()
         if (previewFile) playbackRef.current.seek(playbackRef.current.now());
     };
 
+    // Once: the editing keys changed (S used to mark a cut).
+    useEffect(() => {
+        try {
+            if (localStorage.getItem('capturita.tip.keys')) return;
+            localStorage.setItem('capturita.tip.keys', '1');
+        } catch {
+            return;
+        }
+        toast.info('New editing keys', { description: 'S splits a clip, C marks a part to cut, Z adds a zoom. Press ? for all shortcuts.', duration: 8000 });
+    }, []);
+
     // A new recording starts with zooms around its clicks, like Screen Studio.
     useEffect(() => {
         if (!loaded || !cursor || !freshRef.current) return;
@@ -230,17 +241,17 @@ export function EditorView({ project, onClose }: { project: Project; onClose: ()
         let stuckLogged = false;
         const loop = () => {
             const playback = playbackRef.current;
-            // Note stutters while playing, so a slow preview can be diagnosed from the app's log.
+            // Development builds note stutters while playing, so a slow preview can be diagnosed from the app's log.
             const started = performance.now();
             const gap = started - previous;
             previous = started;
-            if (playback.playing && gap > 80 && started - lastSlowLog > 1000) {
+            if (import.meta.env.DEV && playback.playing && gap > 80 && started - lastSlowLog > 1000) {
                 lastSlowLog = started;
                 const video = playback.screenRef.current;
                 api.log(`[preview] slow frame ${Math.round(gap)} ms at ${playback.now().toFixed(2)} s (video ${video?.currentTime.toFixed(2)}, seeking ${video?.seeking}, ready ${video?.readyState})`);
             }
             const screenVideo = playback.screenRef.current;
-            if (playback.playing && screenVideo) {
+            if (import.meta.env.DEV && playback.playing && screenVideo) {
                 if (screenVideo.currentTime !== lastVideoTime) {
                     if (stuckLogged) api.log(`[preview] video moving again at ${screenVideo.currentTime.toFixed(2)} after ${Math.round(started - videoStuckSince)} ms`);
                     lastVideoTime = screenVideo.currentTime;
@@ -661,6 +672,11 @@ export function EditorView({ project, onClose }: { project: Project; onClose: ()
                                 />
                             )}
                         </div>
+                        {placingFocus && (
+                            <div className='absolute left-1/2 top-3 flex -translate-x-1/2 items-center gap-2 rounded-full bg-panel/90 px-3 py-1.5 text-xs text-muted shadow'>
+                                Placing the zoom — drag the box, press Play to see it zoomed
+                            </div>
+                        )}
                         {makingPreview && (
                             <div className='absolute left-1/2 top-3 flex -translate-x-1/2 items-center gap-2 rounded-full bg-panel/90 px-3 py-1.5 text-xs text-muted shadow'>
                                 <Loader2 className='h-3.5 w-3.5 animate-spin' /> Preparing a smooth preview…

@@ -233,7 +233,9 @@ const LANGUAGE_SWITCH_MIN: f32 = 6.0;
 /// window may still come out in another language when it holds enough speech to be sure (a
 /// recording can start in English and go on in Hindi), but a short one that seems to switch is
 /// redone in the track's language, since short stretches are often misheard.
-pub fn transcribe_words(report: Report, model: PathBuf, audio: Vec<f32>, language: String, cancel: Arc<AtomicBool>) -> Result<Vec<Word>, String> {
+/// `careful` uses beam search (large models); otherwise the quicker greedy decoding, so the small
+/// models stay fast.
+pub fn transcribe_words(report: Report, model: PathBuf, audio: Vec<f32>, language: String, careful: bool, cancel: Arc<AtomicBool>) -> Result<Vec<Word>, String> {
     whisper_rs::install_logging_hooks();
     report("load", 0.0);
     let ctx = WhisperContext::new_with_params(&model, WhisperContextParameters::default()).map_err(|e| format!("Could not load the speech model: {e}"))?;
@@ -268,13 +270,13 @@ pub fn transcribe_words(report: Report, model: PathBuf, audio: Vec<f32>, languag
             Some(track) if sound < LANGUAGE_SWITCH_MIN => track.clone(),
             _ => "auto".to_string(),
         };
-        let mut heard = run_window(&mut state, &input, &pass_language, &report, &progress, &cancel)?;
+        let mut heard = run_window(&mut state, &input, &pass_language, careful, &report, &progress, &cancel)?;
         let detected = whisper_rs::get_lang_str(state.full_lang_id_from_state()).unwrap_or("").to_string();
         match &track_language {
             None => track_language = Some(detected),
             // Unsure switch on a short window: hear it again in the track's language.
             Some(track) if pass_language == "auto" && &detected != track && sound < LANGUAGE_SWITCH_MIN => {
-                heard = run_window(&mut state, &input, track, &report, &progress, &cancel)?;
+                heard = run_window(&mut state, &input, track, careful, &report, &progress, &cancel)?;
             }
             _ => {}
         }
@@ -292,12 +294,14 @@ fn run_window(
     state: &mut whisper_rs::WhisperState,
     input: &[f32],
     language: &str,
+    careful: bool,
     report: &Report,
     progress: &dyn Fn(i32) -> f32,
     cancel: &Arc<AtomicBool>,
 ) -> Result<bool, String> {
     // Beam search: slower than greedy, but far more reliable on accents, mixed languages and music.
-    let mut params = FullParams::new(SamplingStrategy::BeamSearch { beam_size: 5, patience: -1.0 });
+    let strategy = if careful { SamplingStrategy::BeamSearch { beam_size: 5, patience: -1.0 } } else { SamplingStrategy::Greedy { best_of: 1 } };
+    let mut params = FullParams::new(strategy);
     params.set_language(Some(language));
     params.set_translate(false);
     params.set_n_threads(std::thread::available_parallelism().map(|n| n.get().min(8) as i32).unwrap_or(4));
@@ -448,7 +452,7 @@ pub async fn transcribe(app: AppHandle, captions: State<'_, Captions>, request: 
     let result = async {
         let model = ensure_model(&app, id, &cancel).await?;
         let app = app.clone();
-        tauri::async_runtime::spawn_blocking(move || transcribe_words(Arc::new(move |phase: &str, value: f32| progress(&app, phase, value)), model, audio, language, cancel))
+        tauri::async_runtime::spawn_blocking(move || transcribe_words(Arc::new(move |phase: &str, value: f32| progress(&app, phase, value)), model, audio, language, id.starts_with("large"), cancel))
             .await
             .map_err(|e| e.to_string())?
     }

@@ -139,7 +139,7 @@ export function usePlayback(project: Project, clips: Clip[], clickSounds: ClickS
                 const drifted = Math.abs(element.currentTime - local) > MAX_VIDEO_DRIFT * position.clip.speed;
                 const cooledDown = timestamp - (lastResync.current.get(element) ?? 0) > RESYNC_COOLDOWN_MS;
                 if (force || clipChanged || (drifted && !element.seeking && cooledDown)) {
-                    if (isPlaying && !force && !clipChanged) api.log(`[preview] re-seek ${element === screenRef.current ? 'screen' : 'camera'} video from ${element.currentTime.toFixed(2)} to ${local.toFixed(2)}`);
+                    if (import.meta.env.DEV && isPlaying && !force && !clipChanged) api.log(`[preview] re-seek ${element === screenRef.current ? 'screen' : 'camera'} video from ${element.currentTime.toFixed(2)} to ${local.toFixed(2)}`);
                     lastResync.current.set(element, timestamp);
                     element.currentTime = local;
                 }

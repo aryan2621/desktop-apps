@@ -99,6 +99,10 @@ final class Controller {
             return NSNull()
         case "makePreview":
             guard let dir = args.string("dir") else { throw RecorderError("Missing project folder") }
+            // Never alongside a recording: both would use the video encoder, and the recording could drop frames.
+            while recorder.isRecording {
+                try await Task.sleep(for: .seconds(2))
+            }
             return try await PreviewMaker.make(projectDir: URL(fileURLWithPath: dir))
         case "cancel":
             bar.hide()

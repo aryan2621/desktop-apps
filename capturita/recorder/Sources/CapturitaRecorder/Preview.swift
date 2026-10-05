@@ -20,6 +20,14 @@ enum PreviewMaker {
         }
         session.shouldOptimizeForNetworkUse = true
         try await session.export(to: partial, as: .mp4)
+        // Only keep a copy that matches the original's length; otherwise the editor plays the
+        // original rather than a copy whose picture could drift from the cursor and zooms.
+        let original = try await asset.load(.duration).seconds
+        let copy = try await AVURLAsset(url: partial).load(.duration).seconds
+        guard abs(original - copy) < 0.25 else {
+            try? FileManager.default.removeItem(at: partial)
+            throw RecorderError("The preview copy came out \(String(format: "%.2f", copy)) s long instead of \(String(format: "%.2f", original)) s")
+        }
         try FileManager.default.moveItem(at: partial, to: output)
         return fileName
     }
