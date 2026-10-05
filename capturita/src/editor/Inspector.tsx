@@ -91,7 +91,7 @@ const TEXT_POSITIONS = [0.12, 0.5, 0.88];
 const TEXT_ROWS = ['Top', 'Middle', 'Bottom'];
 const TEXT_COLUMNS = ['left', 'centre', 'right'];
 
-type Tab = 'look' | 'zoom' | 'cursor' | 'camera' | 'audio' | 'captions' | 'annotate' | 'ai';
+type Tab = 'look' | 'zoom' | 'cursor' | 'camera' | 'audio' | 'captions' | 'annotate' | 'thumbnail' | 'ai';
 
 /**
  * The settings sidebar. Categories sit in a labelled grid at the top; selecting a zoom, text or
@@ -113,6 +113,7 @@ export function Inspector(props: InspectorProps) {
         { value: 'audio', label: 'Audio', icon: <Volume2 className='h-4 w-4' /> },
         { value: 'captions', label: 'Captions', icon: <CaptionsIcon className='h-4 w-4' /> },
         { value: 'annotate', label: 'Annotate', icon: <Type className='h-4 w-4' /> },
+        { value: 'thumbnail', label: 'Thumbnail', icon: <ImageIcon className='h-4 w-4' /> },
         { value: 'ai', label: 'AI', icon: <Sparkles className='h-4 w-4' /> },
     ];
 
@@ -133,7 +134,7 @@ export function Inspector(props: InspectorProps) {
     return (
         <div className='flex h-full flex-col'>
             {!item && (
-                <nav className='grid shrink-0 grid-cols-4 gap-1 border-b border-line p-2' role='tablist'>
+                <nav className='grid shrink-0 grid-cols-5 gap-1 border-b border-line p-2' role='tablist'>
                     {tabs.map((t) => {
                         const active = tab === t.value;
                         return (
@@ -187,6 +188,9 @@ export function Inspector(props: InspectorProps) {
                                 </Section>
                                 <HidePanel hides={edit.hides} selected={null} duration={props.project.duration} onAdd={props.onAddHide} onChange={props.onHideChange} onDelete={props.onHideDelete} />
                             </div>
+                        )}
+                        {tab === 'thumbnail' && (
+                            <ThumbnailSection project={props.project} version={edit.thumbnail} onFromFrame={props.onThumbnailFromFrame} onFromFile={props.onThumbnailFromFile} />
                         )}
                         {tab === 'ai' && <AiPanel project={props.project} edit={edit} cursor={props.cursor} onApply={props.onReplaceEdit} onSeek={props.onSeekSource} />}
                     </>
@@ -269,7 +273,7 @@ function ItemPanel({ title, onBack, onDelete, children }: { title: string; onBac
 
 // ---- Look ----
 
-function LookPanel({ edit, onChange, projectId, project, onThumbnailFromFrame, onThumbnailFromFile }: InspectorProps) {
+function LookPanel({ edit, onChange, projectId, project }: InspectorProps) {
     const background = edit.background;
     const input = useRef<HTMLInputElement>(null);
     const [busy, setBusy] = useState(false);
@@ -353,8 +357,6 @@ function LookPanel({ edit, onChange, projectId, project, onThumbnailFromFrame, o
                     </>
                 )}
             </Section>
-
-            <ThumbnailSection project={project} version={edit.thumbnail} onFromFrame={onThumbnailFromFrame} onFromFile={onThumbnailFromFile} />
 
             <Section title='Frame'>
                 <Slider label='Padding' value={edit.padding} min={0} max={0.25} step={0.005} format={(v) => percent(v / 0.25)} onChange={(padding) => onChange({ padding }, 'padding')} />
