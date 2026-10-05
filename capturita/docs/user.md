@@ -47,7 +47,7 @@ Finder** and **Move to Trash** buttons; a deleted recording can be put back from
 The editor opens when you stop. Nothing you do changes the original recording.
 
 The settings are in tabs on the right: **Look**, **Zoom**, **Cursor**, **Camera**, **Audio**,
-**Captions**, **Annotate** (text and hidden areas) and **AI**. Selecting a zoom, text or hidden
+**Captions**, **Annotate** (text and hidden areas), **Thumbnail** and **AI**. Selecting a zoom, text or hidden
 area on the timeline shows its own settings there (**Esc** or the back arrow returns).
 **Aspect ratio** and **Crop** are at the top.
 
@@ -66,6 +66,10 @@ area on the timeline shows its own settings there (**Esc** or the back arrow ret
 - **Look:** gradients, colours or your own image (with blur) as the background; padding, rounded
   corners and shadow.
 - **Camera:** corner, size, circle or rounded, and **Shrink while zoomed in**.
+
+**Thumbnail** (its own tab): **Use current frame** (the frame on the preview, as it looks in the
+video) or **Upload image**. It's shown in your library, and a custom one is sent with YouTube
+uploads (YouTube only accepts it on channels verified by phone).
 
 Busy, full-size Retina recordings are previewed from a lighter 1080p copy, made the first time
 you open them ("Preparing a smooth preview…"). Exports always use the original.
