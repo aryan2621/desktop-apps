@@ -1,9 +1,9 @@
 import { useEffect, useState } from 'react';
 import { revealItemInDir } from '@tauri-apps/plugin-opener';
-import { AppWindow, Camera, Crop, Ellipsis, Film, FolderOpen, Mic, Monitor, MousePointerClick, Plus, Sparkles, Trash2, Volume2 } from 'lucide-react';
+import { AppWindow, Camera, Crop, Film, FolderOpen, Mic, Monitor, MousePointerClick, Plus, Sparkles, Trash2, Volume2 } from 'lucide-react';
 import { toast } from 'sonner';
 import { api, errorMessage, fileUrl, formatDuration, type Project } from '../lib/api';
-import { Button, Kbd, Popover, cx } from './ui';
+import { Button, IconButton, Kbd, cx } from './ui';
 
 const relative = new Intl.RelativeTimeFormat(undefined, { numeric: 'auto' });
 
@@ -108,7 +108,7 @@ export function RecordingsList({ recordings, view, onOpen, onDeleted }: { record
                             <th className='px-3 py-2 font-semibold'>Recorded</th>
                             <th className='w-20 px-3 py-2 font-semibold'>Length</th>
                             <th className='w-24 px-3 py-2 font-semibold'>Tracks</th>
-                            <th className='w-12 px-3 py-2' />
+                            <th className='w-20 px-3 py-2' />
                         </tr>
                     </thead>
                     <tbody>
@@ -266,7 +266,7 @@ function RecordingCard({ project, onOpen, onDeleted }: { project: Project; onOpe
                     <span className='absolute bottom-2 left-2 rounded-md bg-black/70 px-1.5 py-0.5 font-mono text-[11px] text-white'>{formatDuration(project.duration)}</span>
                     <TrackIcons project={project} className='absolute bottom-2 right-2 rounded-md bg-black/60 px-1.5 py-1 text-white' />
                 </span>
-                <span className='flex items-center gap-2.5 px-3 py-2.5 pr-10'>
+                <span className='flex items-center gap-2.5 px-3 py-2.5 pr-20'>
                     <SourceIcon className='h-4 w-4 shrink-0 text-subtle' />
                     <span className='min-w-0'>
                         <span className='block truncate text-sm font-medium'>{project.source.name}</span>
@@ -283,76 +283,45 @@ function RecordingCard({ project, onOpen, onDeleted }: { project: Project; onOpe
     );
 }
 
-/** Show in Finder and Delete (with a confirmation), behind a "…" button. */
+/** Show in Finder and Delete. Delete removes the recording straight away. */
 function RecordingMenu({ project, onDeleted }: { project: Project; onDeleted: () => void }) {
-    const [confirming, setConfirming] = useState(false);
+    const [deleting, setDeleting] = useState(false);
     const remove = async () => {
+        setDeleting(true);
         try {
             await api.deleteRecording(project.id);
             onDeleted();
         } catch (error) {
             toast.error(errorMessage(error));
+            setDeleting(false);
         }
     };
     return (
-        <Popover
-            align='end'
-            side='top'
-            trigger={(open, toggle) => (
-                <Button
-                    size='icon-sm'
-                    variant='ghost'
-                    className={cx('h-7 w-7', !open && 'opacity-60 group-hover:opacity-100')}
-                    onClick={(e) => {
-                        e.stopPropagation();
-                        setConfirming(false);
-                        toggle();
-                    }}
-                    title='More'
-                    aria-label='More actions'
-                >
-                    <Ellipsis className='h-4 w-4' />
-                </Button>
-            )}
-        >
-            {(close) =>
-                confirming ? (
-                    <div className='w-56 space-y-2 p-1 text-xs'>
-                        <p className='text-danger-fg'>Delete this recording and its edits for good?</p>
-                        <div className='flex justify-end gap-2'>
-                            <Button size='sm' variant='ghost' onClick={() => setConfirming(false)}>
-                                Keep
-                            </Button>
-                            <Button
-                                size='sm'
-                                variant='danger'
-                                onClick={() => {
-                                    close();
-                                    remove();
-                                }}
-                            >
-                                Delete
-                            </Button>
-                        </div>
-                    </div>
-                ) : (
-                    <div className='flex flex-col'>
-                        <button
-                            className='flex h-8 items-center gap-2 rounded-md px-2 text-left text-xs hover:bg-panel-2'
-                            onClick={() => {
-                                close();
-                                revealItemInDir(project.path);
-                            }}
-                        >
-                            <FolderOpen className='h-3.5 w-3.5' /> Show in Finder
-                        </button>
-                        <button className='flex h-8 items-center gap-2 rounded-md px-2 text-left text-xs text-danger-fg hover:bg-panel-2' onClick={() => setConfirming(true)}>
-                            <Trash2 className='h-3.5 w-3.5' /> Delete…
-                        </button>
-                    </div>
-                )
-            }
-        </Popover>
+        <div className='flex items-center gap-0.5 opacity-70 transition-opacity group-hover:opacity-100'>
+            <IconButton
+                label='Show in Finder'
+                size='icon-sm'
+                className='h-7 w-7'
+                onClick={(e) => {
+                    e.stopPropagation();
+                    revealItemInDir(project.path);
+                }}
+            >
+                <FolderOpen className='h-3.5 w-3.5' />
+            </IconButton>
+            <IconButton
+                label='Delete recording'
+                size='icon-sm'
+                className='h-7 w-7 hover:bg-danger-soft hover:text-danger-fg'
+                disabled={deleting}
+                onClick={(e) => {
+                    e.stopPropagation();
+                    remove();
+                }}
+            >
+                <Trash2 className='h-3.5 w-3.5' />
+            </IconButton>
+        </div>
     );
 }
 
