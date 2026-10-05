@@ -14,8 +14,10 @@ const GROUPS: { title: string; items: [string[], string][] }[] = [
     {
         title: 'Editing',
         items: [
-            [['S'], 'Mark a part to cut, then cut it'],
-            [['Esc'], 'Cancel cutting'],
+            [['S'], 'Split the clip at the playhead'],
+            [['C'], 'Mark a part to cut, then cut it'],
+            [['Z'], 'Add a zoom at the playhead'],
+            [['Esc'], 'Cancel cutting, or deselect'],
             [['T'], 'Add text at the playhead'],
             [['H'], 'Hide part of the screen at the playhead'],
             [['⌫'], 'Delete the selected clip, zoom, text, hidden area or caption'],

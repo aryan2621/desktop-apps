@@ -1,4 +1,4 @@
-import { forwardRef, useEffect, useImperativeHandle, useLayoutEffect, useRef, useState, type PointerEvent as ReactPointerEvent, type ReactNode } from 'react';
+import { forwardRef, useEffect, useImperativeHandle, useLayoutEffect, useRef, useState, type MouseEvent as ReactMouseEvent, type PointerEvent as ReactPointerEvent, type ReactNode } from 'react';
 import { AudioLines, Captions as CaptionsIcon, EyeOff, Film, Type, ZoomIn } from 'lucide-react';
 import { formatDuration } from '../lib/api';
 import { cx } from '../components/ui';
@@ -46,6 +46,8 @@ interface TimelineProps {
     selectedCaptionId: string | null;
     onSelectCaption: (id: string | null) => void;
     onCaptionsChange: (captions: Caption[], key: string) => void;
+    /** Clicking an empty spot on the zoom lane adds a zoom there (output time). */
+    onAddZoomAt: (outputTime: number) => void;
 }
 
 /** A row of timed items (zooms, texts) under the clips. */
@@ -60,32 +62,47 @@ interface RowSpec<T extends TimedItem> {
     title: (item: T) => string;
     /** Extra fields to set when an item is resized (zooms stop being "auto"). */
     patch?: Partial<T>;
+    /** Items can't overlap each other (zooms). */
+    exclusive?: boolean;
     className: { idle: string; selected: string };
 }
 
 const RULER_HEIGHT = 24;
 const CLIP_HEIGHT = 56;
-const ROW_HEIGHT = 22;
+const ROW_HEIGHT = 24;
 const AUDIO_HEIGHT = 34;
 const GAP = 6;
-const ZOOM_TOP = CLIP_HEIGHT + GAP;
-const TEXT_TOP = ZOOM_TOP + ROW_HEIGHT + GAP;
-const HIDE_TOP = TEXT_TOP + ROW_HEIGHT + GAP;
-const CAPTION_TOP = HIDE_TOP + ROW_HEIGHT + GAP;
-const AUDIO_TOP = CAPTION_TOP + ROW_HEIGHT + GAP;
-const LANES_HEIGHT = AUDIO_TOP + AUDIO_HEIGHT;
 const HANDLE_WIDTH = 10;
 /** Edges snap to targets within this many pixels; hold Option to drag freely. */
 const SNAP_PIXELS = 6;
+/** A press that moves less than this is a click (select), not a drag. */
+const DRAG_THRESHOLD = 3;
 
-const LANES: { top: number; height: number; label: string; icon: ReactNode }[] = [
-    { top: 0, height: CLIP_HEIGHT, label: 'Clips — drag an edge to trim', icon: <Film className='h-3.5 w-3.5' /> },
-    { top: ZOOM_TOP, height: ROW_HEIGHT, label: 'Zooms', icon: <ZoomIn className='h-3.5 w-3.5' /> },
-    { top: TEXT_TOP, height: ROW_HEIGHT, label: 'Text', icon: <Type className='h-3.5 w-3.5' /> },
-    { top: HIDE_TOP, height: ROW_HEIGHT, label: 'Hidden areas', icon: <EyeOff className='h-3.5 w-3.5' /> },
-    { top: CAPTION_TOP, height: ROW_HEIGHT, label: 'Captions', icon: <CaptionsIcon className='h-3.5 w-3.5' /> },
-    { top: AUDIO_TOP, height: AUDIO_HEIGHT, label: 'Audio', icon: <AudioLines className='h-3.5 w-3.5' /> },
-];
+type LaneKey = 'clips' | 'zoom' | 'text' | 'hide' | 'captions' | 'audio';
+
+const LANE_INFO: Record<LaneKey, { label: string; hint: string; icon: ReactNode; height: number }> = {
+    clips: { label: 'Clips', hint: 'Clips — drag an edge to trim', icon: <Film className='h-3.5 w-3.5' />, height: CLIP_HEIGHT },
+    zoom: { label: 'Zoom', hint: 'Zooms — click an empty spot to add one', icon: <ZoomIn className='h-3.5 w-3.5' />, height: ROW_HEIGHT },
+    text: { label: 'Text', hint: 'Text', icon: <Type className='h-3.5 w-3.5' />, height: ROW_HEIGHT },
+    hide: { label: 'Hide', hint: 'Hidden areas', icon: <EyeOff className='h-3.5 w-3.5' />, height: ROW_HEIGHT },
+    captions: { label: 'Captions', hint: 'Captions', icon: <CaptionsIcon className='h-3.5 w-3.5' />, height: ROW_HEIGHT },
+    audio: { label: 'Audio', hint: 'Audio', icon: <AudioLines className='h-3.5 w-3.5' />, height: AUDIO_HEIGHT },
+};
+
+/** Lanes stacked top to bottom; lanes with nothing on them are left out, except clips, zoom and audio. */
+function laneLayout(present: Record<LaneKey, boolean>) {
+    const order: LaneKey[] = ['clips', 'zoom', 'text', 'hide', 'captions', 'audio'];
+    const tops = {} as Record<LaneKey, number>;
+    const lanes: { key: LaneKey; top: number }[] = [];
+    let top = 0;
+    for (const key of order) {
+        if (!present[key]) continue;
+        tops[key] = top;
+        lanes.push({ key, top });
+        top += LANE_INFO[key].height + GAP;
+    }
+    return { tops, lanes, height: top - GAP };
+}
 
 export const Timeline = forwardRef<TimelineHandle, TimelineProps>(function Timeline(props, ref) {
     const {
@@ -117,7 +134,28 @@ export const Timeline = forwardRef<TimelineHandle, TimelineProps>(function Timel
         selectedCaptionId,
         onSelectCaption,
         onCaptionsChange,
+        onAddZoomAt,
     } = props;
+    const { tops, lanes, height: LANES_HEIGHT } = laneLayout({
+        clips: true,
+        zoom: true,
+        text: texts.length > 0,
+        hide: hides.length > 0,
+        captions: captions.length > 0,
+        audio: true,
+    });
+    const AUDIO_TOP = tops.audio;
+    const [menu, setMenu] = useState<{ x: number; y: number; items: { label: string; action: () => void; danger?: boolean }[] } | null>(null);
+    useEffect(() => {
+        if (!menu) return;
+        const close = () => setMenu(null);
+        window.addEventListener('pointerdown', close);
+        window.addEventListener('blur', close);
+        return () => {
+            window.removeEventListener('pointerdown', close);
+            window.removeEventListener('blur', close);
+        };
+    }, [menu]);
     const viewportRef = useRef<HTMLDivElement>(null);
     const containerRef = useRef<HTMLDivElement>(null);
     const playheadRef = useRef<HTMLDivElement>(null);
@@ -270,18 +308,78 @@ export const Timeline = forwardRef<TimelineHandle, TimelineProps>(function Timel
         const original = item[edge];
         const dragScale = scale;
         row.onSelectItem(item.id);
+        const { before, after } = neighbours(row, item);
         drag(event, (e) => {
             const raw = original + ((e.clientX - originX) / dragScale) * clip.speed;
             const snapped = clip.start + (snap(starts[clipIndex] + (raw - clip.start) / clip.speed, e, item.id) - starts[clipIndex]) * clip.speed;
             const value =
                 edge === 'start'
-                    ? Math.min(item.end - MIN_ZOOM, Math.max(0, snapped))
-                    : Math.max(item.start + MIN_ZOOM, Math.min(sourceDuration, snapped));
+                    ? Math.min(item.end - MIN_ZOOM, Math.max(before, snapped))
+                    : Math.max(item.start + MIN_ZOOM, Math.min(after, snapped));
             row.onItemsChange(
                 row.items.map((i) => (i.id === item.id ? { ...i, ...row.patch, [edge]: value } : i)),
                 `${row.kind}-${item.id}-${edge}`
             );
         });
+    };
+
+    /** How far an item may extend: the recording, or its neighbours on an exclusive row. */
+    const neighbours = <T extends TimedItem>(row: RowSpec<T>, item: T) => {
+        let before = 0;
+        let after = sourceDuration;
+        if (row.exclusive) {
+            for (const other of row.items) {
+                if (other.id === item.id) continue;
+                if (other.end <= item.start + 1e-6) before = Math.max(before, other.end);
+                if (other.start >= item.end - 1e-6) after = Math.min(after, other.start);
+            }
+        }
+        return { before, after };
+    };
+
+    /** Press on an item: a click selects it, a drag moves it along the timeline. */
+    const startItemMove = <T extends TimedItem>(event: ReactPointerEvent, row: RowSpec<T>, item: T, clipIndex: number) => {
+        if (event.button !== 0) return;
+        event.stopPropagation();
+        row.onSelectItem(item.id);
+        const clip = clips[clipIndex];
+        const originX = event.clientX;
+        const length = item.end - item.start;
+        const { before, after } = neighbours(row, item);
+        let moving = false;
+        drag(event, (e) => {
+            if (!moving && Math.abs(e.clientX - originX) < DRAG_THRESHOLD) return;
+            moving = true;
+            const raw = item.start + ((e.clientX - originX) / scale) * clip.speed;
+            // Snap whichever edge is closer to something, via the start edge.
+            const snapped = clip.start + (snap(starts[clipIndex] + (raw - clip.start) / clip.speed, e, item.id) - starts[clipIndex]) * clip.speed;
+            const start = Math.min(after - length, Math.max(before, snapped));
+            if (start < before - 1e-6) return;
+            row.onItemsChange(
+                row.items.map((i) => (i.id === item.id ? { ...i, ...row.patch, start, end: start + length } : i)).sort((a, b) => a.start - b.start),
+                `${row.kind}-${item.id}-move`
+            );
+        });
+    };
+
+    const openMenu = <T extends TimedItem>(event: ReactMouseEvent, row: RowSpec<T>, item: T) => {
+        event.preventDefault();
+        event.stopPropagation();
+        row.onSelectItem(item.id);
+        const items: { label: string; action: () => void; danger?: boolean }[] = [];
+        if (row.kind === 'zoom') {
+            const zoom = item as unknown as Zoom;
+            items.push({
+                label: zoom.instant ? 'Animate in and out' : 'Make instant',
+                action: () => row.onItemsChange(row.items.map((i) => (i.id === item.id ? { ...i, instant: !zoom.instant, auto: false } : i)), `zoom-instant-${item.id}`),
+            });
+            items.push({
+                label: zoom.mode === 'follow' ? 'Stay on a fixed point' : 'Follow the cursor',
+                action: () => row.onItemsChange(row.items.map((i) => (i.id === item.id ? { ...i, mode: zoom.mode === 'follow' ? 'fixed' : 'follow', auto: false } : i)), `zoom-mode-${item.id}`),
+            });
+        }
+        items.push({ label: 'Delete', danger: true, action: () => row.onItemsChange(row.items.filter((i) => i.id !== item.id), `${row.kind}-${item.id}-delete`) });
+        setMenu({ x: event.clientX, y: event.clientY, items });
     };
 
     /** Drags one of the two cut markers. */
@@ -300,21 +398,31 @@ export const Timeline = forwardRef<TimelineHandle, TimelineProps>(function Timel
 
     const renderRow = <T extends TimedItem>(row: RowSpec<T>) => (
         <>
-            <div className='pointer-events-none absolute inset-x-0 rounded bg-panel-2/70' style={{ top: row.top, height: ROW_HEIGHT }} />
+            {row.kind === 'zoom' ? (
+                <div
+                    className='group absolute inset-x-0 cursor-copy rounded bg-panel-2/70 hover:bg-lane-zoom/10'
+                    style={{ top: row.top, height: ROW_HEIGHT }}
+                    onPointerDown={(e) => {
+                        if (e.button !== 0) return;
+                        e.stopPropagation();
+                        onAddZoomAt(timeAt(e.clientX));
+                    }}
+                    title='Click to add a zoom here'
+                />
+            ) : (
+                <div className='pointer-events-none absolute inset-x-0 rounded bg-panel-2/70' style={{ top: row.top, height: ROW_HEIGHT }} />
+            )}
             {timedSegments(clips, row.items).map(({ item, clipIndex, from, to, startsItem, endsItem }) => (
                 <div
                     key={`${item.id}-${clipIndex}`}
                     className={cx(
-                        'absolute flex items-center overflow-hidden rounded border text-[10px] font-medium',
+                        'absolute flex cursor-grab items-center overflow-hidden rounded-md border text-[10px] font-medium active:cursor-grabbing',
                         item.id === row.selectedItemId ? `z-10 ${row.className.selected}` : row.className.idle
                     )}
                     style={{ top: row.top, height: ROW_HEIGHT, left: from * scale, width: Math.max(6, (to - from) * scale) }}
-                    onPointerDown={(e) => {
-                        if (e.button !== 0) return;
-                        e.stopPropagation();
-                        row.onSelectItem(item.id);
-                    }}
-                    title={row.title(item)}
+                    onPointerDown={(e) => startItemMove(e, row, item, clipIndex)}
+                    onContextMenu={(e) => openMenu(e, row, item)}
+                    title={`${row.title(item)} — drag to move, right-click for options`}
                 >
                     <span className='pointer-events-none truncate px-2'>{row.label(item)}</span>
                     {startsItem && (
@@ -338,17 +446,39 @@ export const Timeline = forwardRef<TimelineHandle, TimelineProps>(function Timel
 
     return (
         <div className='flex select-none'>
+            {menu && (
+                <div
+                    className='fixed z-50 min-w-44 rounded-lg border border-line bg-panel p-1 shadow-panel'
+                    style={{ left: menu.x, top: menu.y - 8, transform: 'translateY(-100%)' }}
+                    onPointerDown={(e) => e.stopPropagation()}
+                    role='menu'
+                >
+                    {menu.items.map((item) => (
+                        <button
+                            key={item.label}
+                            role='menuitem'
+                            className={cx('flex h-8 w-full items-center rounded-md px-2.5 text-left text-xs hover:bg-panel-2', item.danger ? 'text-danger-fg' : 'text-fg')}
+                            onClick={() => {
+                                item.action();
+                                setMenu(null);
+                            }}
+                        >
+                            {item.label}
+                        </button>
+                    ))}
+                </div>
+            )}
             {/* Lane labels */}
-            <div className='relative w-8 shrink-0' style={{ height: RULER_HEIGHT + LANES_HEIGHT }}>
-                {LANES.map((lane) => (
+            <div className='relative w-[74px] shrink-0' style={{ height: RULER_HEIGHT + LANES_HEIGHT }}>
+                {lanes.map(({ key, top }) => (
                     <div
-                        key={lane.label}
-                        className='absolute left-0 flex w-6 items-center justify-center rounded-md text-subtle'
-                        style={{ top: RULER_HEIGHT + lane.top, height: lane.height }}
-                        title={lane.label}
-                        aria-label={lane.label}
+                        key={key}
+                        className='absolute left-0 right-2 flex items-center gap-1.5 text-[11px] font-medium text-subtle'
+                        style={{ top: RULER_HEIGHT + top, height: LANE_INFO[key].height }}
+                        title={LANE_INFO[key].hint}
                     >
-                        {lane.icon}
+                        {LANE_INFO[key].icon}
+                        {LANE_INFO[key].label}
                     </div>
                 ))}
             </div>
@@ -411,19 +541,20 @@ export const Timeline = forwardRef<TimelineHandle, TimelineProps>(function Timel
                             );
                         })}
                         {renderRow<Zoom>({
-                            top: ZOOM_TOP,
+                            top: tops.zoom,
                             items: zooms,
                             selectedItemId: selectedZoomId,
                             onSelectItem: onSelectZoom,
                             onItemsChange: onZoomsChange,
                             kind: 'zoom',
-                            label: (item) => `${item.scale.toFixed(1)}×`,
+                            label: (item) => `${item.scale.toFixed(1)}×${item.mode === 'fixed' ? ' · Fixed' : ''}${item.instant ? ' · Instant' : ''}${item.auto ? ' · Auto' : ''}`,
                             title: (item) => `Zoom ${item.scale.toFixed(1)}× (${item.mode === 'follow' ? 'follows the cursor' : 'fixed point'})`,
                             patch: { auto: false },
+                            exclusive: true,
                             className: { idle: 'border-lane-zoom/60 bg-lane-zoom/35 text-fg hover:bg-lane-zoom/55', selected: 'border-fg bg-lane-zoom text-white' },
                         })}
-                        {renderRow<TextOverlay>({
-                            top: TEXT_TOP,
+                        {texts.length > 0 && renderRow<TextOverlay>({
+                            top: tops.text,
                             items: texts,
                             selectedItemId: selectedTextId,
                             onSelectItem: onSelectText,
@@ -433,8 +564,8 @@ export const Timeline = forwardRef<TimelineHandle, TimelineProps>(function Timel
                             title: (text) => `Text: ${text.text || 'empty'}`,
                             className: { idle: 'border-lane-text/60 bg-lane-text/30 text-fg hover:bg-lane-text/50', selected: 'border-fg bg-lane-text text-black' },
                         })}
-                        {renderRow<HideRegion>({
-                            top: HIDE_TOP,
+                        {hides.length > 0 && renderRow<HideRegion>({
+                            top: tops.hide,
                             items: hides,
                             selectedItemId: selectedHideId,
                             onSelectItem: onSelectHide,
@@ -444,8 +575,8 @@ export const Timeline = forwardRef<TimelineHandle, TimelineProps>(function Timel
                             title: (hide) => `Hidden area (${hide.style})`,
                             className: { idle: 'border-lane-hide/60 bg-lane-hide/30 text-fg hover:bg-lane-hide/50', selected: 'border-fg bg-lane-hide text-white' },
                         })}
-                        {renderRow<Caption>({
-                            top: CAPTION_TOP,
+                        {captions.length > 0 && renderRow<Caption>({
+                            top: tops.captions,
                             items: captions,
                             selectedItemId: selectedCaptionId,
                             onSelectItem: onSelectCaption,

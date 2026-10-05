@@ -18,7 +18,7 @@ import { api, fileUrl, type CursorData, type Project, type VideoTrack } from '..
 import { loadAudioTracks, loadMusic, scheduleTimeline } from './audioSchedule';
 import { loadClickSound } from './clickSound';
 import { aspectRatio, positionAt, totalDuration, type Edit } from './model';
-import { drawFrame, type FrameSource } from './render';
+import { drawFrame, preloadBackground, type FrameSource } from './render';
 
 export type Resolution = 720 | 1080 | 2160;
 
@@ -108,6 +108,7 @@ export async function exportVideo(options: {
         canvas.height = height;
         const ctx = canvas.getContext('2d');
         if (!ctx) throw new Error('Could not create a drawing surface for the export');
+        await preloadBackground(project, edit.background);
         const videoSource = new CanvasSource(canvas, { codec: 'avc', bitrate: QUALITY_HIGH });
         output.addVideoTrack(videoSource, { frameRate: settings.fps });
         const audioSource = mixed ? new AudioBufferSource({ codec: 'aac', bitrate: AUDIO_BITRATE }) : null;

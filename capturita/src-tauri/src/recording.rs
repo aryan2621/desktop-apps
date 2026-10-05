@@ -357,6 +357,34 @@ pub fn import_music(app: AppHandle, request: tauri::ipc::Request<'_>) -> Result<
     Ok(file)
 }
 
+/// Copies an image into the project folder as `background-<time>.<ext>` (replacing any earlier
+/// one) to use as the video's background. A new name each time keeps the webview from showing a
+/// cached copy of the previous image.
+#[tauri::command]
+pub fn import_background(app: AppHandle, request: tauri::ipc::Request<'_>) -> Result<String, String> {
+    let tauri::ipc::InvokeBody::Raw(bytes) = request.body() else {
+        return Err("Expected raw bytes".into());
+    };
+    let header = |key: &str| request.headers().get(key).and_then(|v| v.to_str().ok()).map(str::to_string);
+    let id = header("id").ok_or("Missing id header")?;
+    let name = header("name").unwrap_or_default().replace("%2E", ".").replace("%2e", ".");
+    let ext = std::path::Path::new(&name)
+        .extension()
+        .and_then(|e| e.to_str())
+        .map(str::to_ascii_lowercase)
+        .filter(|e| ["png", "jpg", "jpeg", "webp", "gif", "heic"].contains(&e.as_str()))
+        .ok_or("Choose an image (PNG, JPEG, WebP, HEIC)")?;
+    let dir = project_dir(&app, &id)?;
+    for entry in std::fs::read_dir(&dir).map_err(|e| e.to_string())?.flatten() {
+        if entry.file_name().to_string_lossy().starts_with("background-") {
+            let _ = std::fs::remove_file(entry.path());
+        }
+    }
+    let file = format!("background-{}.{ext}", chrono::Local::now().timestamp_millis());
+    std::fs::write(dir.join(&file), bytes).map_err(|e| e.to_string())?;
+    Ok(file)
+}
+
 /// Appends a diagnostic line from the webview to ~/Library/Logs/com.capturita.app/webview.log.
 #[tauri::command]
 pub fn log_debug(app: AppHandle, message: String) -> Result<(), String> {

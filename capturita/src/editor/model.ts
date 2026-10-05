@@ -1,4 +1,5 @@
 import type { CursorData, Project } from '../lib/api';
+import type { CursorAnimation, ScreenAnimation } from './motion';
 
 /**
  * Everything the user changes in the editor. Saved as edit.json next to the recording;
@@ -20,6 +21,8 @@ export interface Edit {
     aspect: Aspect;
     camera: CameraLayout;
     cursor: CursorStyle;
+    /** How the zoom camera moves, and motion blur. */
+    motion: Motion;
     zooms: Zoom[];
     /** Zoom amount used for auto-zoom and newly added zooms. */
     zoomScale: number;
@@ -193,6 +196,15 @@ export interface Zoom {
     y: number;
     /** Created by auto-zoom (replaced when auto-zoom runs again). */
     auto: boolean;
+    /** Cut straight in and out instead of animating. */
+    instant?: boolean;
+}
+
+export interface Motion {
+    /** Feel of zooms and pans. */
+    screen: ScreenAnimation;
+    /** 0 (off) to 1: blur along fast camera and cursor movement. */
+    blur: number;
 }
 
 export interface Clip {
@@ -211,7 +223,11 @@ export interface NormalizedRect {
 
 export type Aspect = 'auto' | '16:9' | '9:16' | '1:1' | '4:5';
 
-export type Background = { type: 'gradient'; from: string; to: string; angle: number } | { type: 'color'; color: string };
+export type Background =
+    | { type: 'gradient'; from: string; to: string; angle: number }
+    | { type: 'color'; color: string }
+    /** An image copied into the project folder, cover-fitted and optionally blurred (0–1). */
+    | { type: 'image'; file: string; name: string; blur: number };
 
 export type CameraCorner = 'top-left' | 'top-right' | 'bottom-left' | 'bottom-right';
 
@@ -221,6 +237,8 @@ export interface CameraLayout {
     /** Diameter as a fraction of the shorter side of the frame. */
     size: number;
     shape: 'circle' | 'rounded';
+    /** Get smaller while the screen is zoomed in, so it covers less of what matters. */
+    shrinkOnZoom: boolean;
 }
 
 export type CursorShape = 'arrow' | 'hand' | 'dot';
@@ -231,8 +249,13 @@ export interface CursorStyle {
     shape: CursorShape;
     /** Multiplier on the natural cursor size. */
     size: number;
-    /** 0 draws the raw movement, 1 is the smoothest. */
-    smoothing: number;
+    /** How the recorded movement is smoothed. */
+    animation: CursorAnimation;
+    /** Fade the cursor out when it hasn't moved for `idleDelay` seconds. */
+    hideIdle: boolean;
+    idleDelay: number;
+    /** Colour of the click ripple or pulse. */
+    clickColor: string;
     /** What appears where the mouse was clicked. */
     clickStyle: ClickStyle;
     /** The cursor dips briefly on each click, like a button being pressed. */
@@ -263,7 +286,16 @@ export const GRADIENTS: Background[] = [
     { type: 'gradient', from: '#232526', to: '#414345', angle: 180 },
     { type: 'gradient', from: '#e0eafc', to: '#cfdef3', angle: 135 },
     { type: 'gradient', from: '#1a2a6c', to: '#fdbb2d', angle: 135 },
+    { type: 'gradient', from: '#d97757', to: '#f2c6a0', angle: 135 },
+    { type: 'gradient', from: '#141e30', to: '#243b55', angle: 150 },
+    { type: 'gradient', from: '#ff9a9e', to: '#fecfef', angle: 135 },
+    { type: 'gradient', from: '#a1c4fd', to: '#c2e9fb', angle: 135 },
 ];
+
+export const SOLID_COLORS = ['#f5f1ea', '#ffffff', '#1f1e1d', '#000000', '#d97757', '#2f5d50'];
+
+/** Click ripple colours offered in the cursor settings; the first is the default. */
+export const CLICK_COLORS = ['#d97757', '#ffffff', '#1f1f1f', '#7c5cff', '#2f9bff', '#30c46c'];
 
 export const MIN_CLIP = 0.2;
 export const MIN_ZOOM = 0.5;
@@ -281,8 +313,22 @@ export function defaultEdit(project: Project): Edit {
         shadow: 0.5,
         crop: { x: 0, y: 0, width: 1, height: 1 },
         aspect: 'auto',
-        camera: { visible: true, corner: 'bottom-left', size: 0.24, shape: 'circle' },
-        cursor: { visible: true, shape: 'arrow', size: 1, smoothing: 0.5, clickStyle: 'ripple', pressEffect: true, clickSound: false, clickSoundType: 'tick', clickVolume: 0.6 },
+        camera: { visible: true, corner: 'bottom-left', size: 0.24, shape: 'circle', shrinkOnZoom: true },
+        cursor: {
+            visible: true,
+            shape: 'arrow',
+            size: 1,
+            animation: 'mellow',
+            hideIdle: false,
+            idleDelay: 2,
+            clickStyle: 'ripple',
+            clickColor: CLICK_COLORS[0],
+            pressEffect: true,
+            clickSound: false,
+            clickSoundType: 'tick',
+            clickVolume: 0.6,
+        },
+        motion: { screen: 'smooth', blur: 0.5 },
         zooms: [],
         zoomScale: DEFAULT_ZOOM_SCALE,
         texts: [],
@@ -303,6 +349,11 @@ export function normalizeEdit(project: Project, raw: unknown): Edit {
     const legacy = (raw as { cursor?: { clickEffect?: boolean; clickStyle?: ClickStyle } }).cursor;
     if (legacy && legacy.clickStyle === undefined && legacy.clickEffect === false) edit.cursor.clickStyle = 'none';
     delete (edit.cursor as Partial<{ clickEffect: boolean }>).clickEffect;
+    // Edits saved before cursor animations had a 0–1 `smoothing`.
+    const smoothing = (raw as { cursor?: { smoothing?: number; animation?: CursorAnimation } }).cursor;
+    if (smoothing && smoothing.animation === undefined && smoothing.smoothing === 0) edit.cursor.animation = 'off';
+    delete (edit.cursor as Partial<{ smoothing: number }>).smoothing;
+    edit.motion = { ...base.motion, ...edit.motion };
     edit.zoomScale = edit.zoomScale || DEFAULT_ZOOM_SCALE;
     edit.texts = Array.isArray(edit.texts)
         ? edit.texts.filter((t) => t.end - t.start >= MIN_ZOOM / 2).map((t) => ({ ...t, font: t.font ?? 'system', animation: t.animation ?? 'rise' }))
@@ -436,33 +487,55 @@ export function aspectRatio(edit: Edit, project: Project) {
 
 // ---- Zoom ----
 
-/** How long zooming in or out takes, in seconds of the recording. */
-export const ZOOM_TRANSITION = 0.6;
-/** Clicks closer together than this share one zoom. */
-const CLICK_GROUP_GAP = 3;
-const ZOOM_LEAD_IN = 0.8;
-const ZOOM_HOLD = 1.6;
+/** Auto-zoom starts this long before the first click, so the camera has arrived by the click. */
+export const ZOOM_LEAD_IN = 0.5;
+/** …and stays this long after the last click, so the result of the click can be seen. */
+export const ZOOM_HOLD = 1.8;
+/** Clicks closer together than this (and close on screen) share one zoom. */
+const CLICK_GROUP_GAP = 2.5;
+/** Zooms closer than this are joined: the camera pans from one to the next instead of zooming out. */
+const ZOOM_MERGE_GAP = 1;
+/** Clicks of one zoom must fit in this share of the zoomed-in view. */
+const GROUP_FIT = 0.8;
 
-/** Zoom regions around groups of clicks, like a person editing the video would add them. */
+/**
+ * Zoom regions around groups of clicks, like a person editing the video would add them. Clicks
+ * are grouped when they are close in time and close enough on screen to be seen in one zoomed
+ * view; a click elsewhere starts a new zoom.
+ */
 export function autoZooms(cursor: CursorData, duration: number, scale = DEFAULT_ZOOM_SCALE): Zoom[] {
-    const clicks = cursor.clicks.map(([t]) => t).sort((a, b) => a - b);
-    const groups: [number, number][] = [];
-    for (const t of clicks) {
-        const last = groups[groups.length - 1];
-        if (last && t - last[1] < CLICK_GROUP_GAP) last[1] = t;
-        else groups.push([t, t]);
+    const view = (1 / scale) * GROUP_FIT;
+    const clicks = cursor.clicks
+        .filter(([, x, y, button]) => button !== 'right' && x >= -0.01 && x <= 1.01 && y >= -0.01 && y <= 1.01)
+        .map(([t, x, y]) => ({ t, x, y }))
+        .sort((a, b) => a.t - b.t);
+    const groups: { first: number; last: number; minX: number; maxX: number; minY: number; maxY: number }[] = [];
+    for (const { t, x, y } of clicks) {
+        const g = groups[groups.length - 1];
+        const fits = g && Math.max(g.maxX, x) - Math.min(g.minX, x) <= view && Math.max(g.maxY, y) - Math.min(g.minY, y) <= view;
+        if (g && t - g.last < CLICK_GROUP_GAP && fits) {
+            g.last = t;
+            g.minX = Math.min(g.minX, x);
+            g.maxX = Math.max(g.maxX, x);
+            g.minY = Math.min(g.minY, y);
+            g.maxY = Math.max(g.maxY, y);
+        } else {
+            groups.push({ first: t, last: t, minX: x, maxX: x, minY: y, maxY: y });
+        }
     }
     const zooms: Zoom[] = [];
-    for (const [first, last] of groups) {
-        const start = Math.max(0, first - ZOOM_LEAD_IN);
-        const end = Math.min(duration, last + ZOOM_HOLD);
+    for (const g of groups) {
+        const start = Math.max(0, g.first - ZOOM_LEAD_IN);
+        const end = Math.min(duration, g.last + ZOOM_HOLD);
         const previous = zooms[zooms.length - 1];
-        // Merge with the previous zoom rather than zooming out for a split second.
-        if (previous && start - previous.end < ZOOM_TRANSITION * 2) {
+        // Rather than zooming out for a moment, stay in and pan over to the next place.
+        if (previous && start - previous.end < ZOOM_MERGE_GAP) {
             previous.end = end;
             continue;
         }
-        if (end - start >= MIN_ZOOM) zooms.push({ id: newId(), start, end, scale, mode: 'follow', x: 0.5, y: 0.5, auto: true });
+        const x = Math.min(1, Math.max(0, (g.minX + g.maxX) / 2));
+        const y = Math.min(1, Math.max(0, (g.minY + g.maxY) / 2));
+        if (end - start >= MIN_ZOOM) zooms.push({ id: newId(), start, end, scale, mode: 'follow', x, y, auto: true });
     }
     return zooms;
 }
@@ -471,15 +544,6 @@ const smoothstep = (x: number) => {
     const t = Math.min(1, Math.max(0, x));
     return t * t * (3 - 2 * t);
 };
-
-/**
- * How far a zoom is in at source time t: it eases in over the first ZOOM_TRANSITION seconds of
- * the zoom and out over the last, so the zoom never reaches outside its block on the timeline.
- */
-export function zoomAmount(zoom: Zoom, t: number) {
-    const transition = Math.min(ZOOM_TRANSITION, (zoom.end - zoom.start) / 2);
-    return Math.min(smoothstep((t - zoom.start) / transition), smoothstep((zoom.end - t) / transition));
-}
 
 export interface TimedItem {
     id: string;
