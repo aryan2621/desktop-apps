@@ -100,9 +100,9 @@ export function EmptyLibrary({ onNew }: { onNew: () => void }) {
 export function RecordingsList({ recordings, view, onOpen, onDeleted }: { recordings: Project[]; view: LibraryView; onOpen: (project: Project) => void; onDeleted: () => void }) {
     if (view === 'table') {
         return (
-            <div className='overflow-hidden rounded-xl border border-line bg-panel'>
+            <div className='rounded-xl border border-line bg-panel'>
                 <table className='w-full table-fixed text-sm'>
-                    <thead className='border-b border-line bg-panel-2 text-left text-[11px] font-semibold uppercase tracking-wider text-subtle'>
+                    <thead className='border-b border-line bg-panel-2 text-left text-[11px] font-semibold uppercase tracking-wider text-subtle [&_th:first-child]:rounded-tl-xl [&_th:last-child]:rounded-tr-xl'>
                         <tr>
                             <th className='w-[46%] px-3 py-2 font-semibold'>Recording</th>
                             <th className='px-3 py-2 font-semibold'>Recorded</th>
@@ -259,9 +259,9 @@ function TrackIcons({ project, className }: { project: Project; className?: stri
 function RecordingCard({ project, onOpen, onDeleted }: { project: Project; onOpen: () => void; onDeleted: () => void }) {
     const SourceIcon = SOURCE_ICONS[project.source.type] ?? Monitor;
     return (
-        <div className='group relative overflow-hidden rounded-xl border border-line bg-panel shadow-sm transition-[border-color,transform,box-shadow] duration-200 hover:-translate-y-0.5 hover:border-line-strong hover:shadow-md'>
+        <div className='group relative rounded-xl border border-line bg-panel shadow-sm transition-[border-color,transform,box-shadow] duration-200 focus-within:z-10 hover:z-10 hover:-translate-y-0.5 hover:border-line-strong hover:shadow-md'>
             <button onClick={onOpen} className='block w-full cursor-default text-left' title='Open in the editor'>
-                <span className='relative block aspect-video w-full overflow-hidden bg-stage'>
+                <span className='relative block aspect-video w-full overflow-hidden rounded-t-[11px] bg-stage'>
                     <Thumbnail project={project} />
                     <span className='absolute bottom-2 left-2 rounded-md bg-black/70 px-1.5 py-0.5 font-mono text-[11px] text-white'>{formatDuration(project.duration)}</span>
                     <TrackIcons project={project} className='absolute bottom-2 right-2 rounded-md bg-black/60 px-1.5 py-1 text-white' />
