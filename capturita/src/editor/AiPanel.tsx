@@ -5,7 +5,7 @@ import { toast } from 'sonner';
 import { api, errorMessage, type CaptionProgress, type CursorData, type Project } from '../lib/api';
 import { Button, cx } from '../components/ui';
 import { askAi, applyProposals, fillerCuts, pauseCuts, type Proposal } from './aiEdit';
-import { makeCaptions, speechSources } from './captions';
+import { makeCaptions, defaultSpeechSources, speechSources } from './captions';
 import type { Edit } from './model';
 
 const EXAMPLES = ['Cut the part where I talk about pricing', 'Remove anything off-topic', 'Speed up the parts where nothing happens', 'Add a title at the start', 'Zoom in when I click'];
@@ -73,7 +73,7 @@ export function AiPanel({
     const ensureTranscript = async (): Promise<Edit> => {
         if (transcribed) return edit;
         setBusy({ label: 'Reading what you said', progress: 0 });
-        const made = await makeCaptions(project, edit.captions.language, speechSources(project));
+        const made = await makeCaptions(project, edit.captions.language, defaultSpeechSources(project));
         const next = { ...edit, captions: { ...edit.captions, items: made.items, fillers: made.fillers, visible: false } };
         onApply(next, 'ai-transcript');
         return next;

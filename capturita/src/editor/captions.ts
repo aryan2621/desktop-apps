@@ -25,6 +25,11 @@ async function speechAudio(project: Project, sources: TrackKind[]) {
     return (await context.startRendering()).getChannelData(0);
 }
 
+/** Tracks to transcribe by default: your microphone if there is one, otherwise system audio. */
+export function defaultSpeechSources(project: Project): TrackKind[] {
+    return project.tracks.microphone ? ['microphone'] : speechSources(project);
+}
+
 /** The tracks with speech in them, best first. */
 export function speechSources(project: Project): TrackKind[] {
     const kinds: TrackKind[] = [];

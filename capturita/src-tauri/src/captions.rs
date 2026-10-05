@@ -90,62 +90,121 @@ async fn ensure_model(app: &AppHandle, cancel: &AtomicBool) -> Result<PathBuf, S
     Ok(path)
 }
 
+/// Whisper hears 30 seconds at a time; windows are cut a little shorter, at a quiet moment.
+const WINDOW: f32 = 28.0;
+/// The cut is placed at the quietest point in the last part of a window.
+const CUT_SEARCH: f32 = 8.0;
+/// Words Whisper itself rates as likely "not speech" are dropped.
+const NO_SPEECH: f32 = 0.8;
+
+/// Splits the audio into windows of at most WINDOW seconds, cut where it's quietest, so no word
+/// is chopped in half. Returns sample ranges.
+fn windows(samples: &[f32]) -> Vec<(usize, usize)> {
+    let rate = SAMPLE_RATE as f32;
+    let total = samples.len() as f32 / rate;
+    let mut ranges = Vec::new();
+    let mut start = 0.0f32;
+    while total - start > WINDOW {
+        let from = start + WINDOW - CUT_SEARCH;
+        let to = start + WINDOW;
+        let mut cut = to;
+        let mut quietest = f32::MAX;
+        let mut t = from;
+        while t + 0.05 <= to {
+            let level = rms(samples, t, t + 0.05);
+            if level < quietest {
+                quietest = level;
+                cut = t + 0.025;
+            }
+            t += 0.05;
+        }
+        ranges.push(((start * rate) as usize, (cut * rate) as usize));
+        start = cut;
+    }
+    ranges.push(((start * rate) as usize, samples.len()));
+    ranges
+}
+
 /// Runs Whisper over the audio and returns every word with its timing.
+///
+/// The audio goes through in windows of about 30 seconds, each a separate pass. With "auto",
+/// every window detects its own language: a recording can start in English and go on in Hindi
+/// (a narrated video, a call), and forcing one language on all of it makes Whisper invent text.
 fn transcribe_words(app: AppHandle, model: PathBuf, audio: Vec<f32>, language: String, cancel: Arc<AtomicBool>) -> Result<Vec<Word>, String> {
     whisper_rs::install_logging_hooks();
     progress(&app, "load", 0.0);
     let ctx = WhisperContext::new_with_params(&model, WhisperContextParameters::default()).map_err(|e| format!("Could not load the speech model: {e}"))?;
     let mut state = ctx.create_state().map_err(|e| e.to_string())?;
+    let language = if language.is_empty() { "auto".to_string() } else { language };
 
-    let mut params = FullParams::new(SamplingStrategy::Greedy { best_of: 1 });
-    params.set_language(Some(if language.is_empty() { "auto" } else { &language }));
-    params.set_translate(false);
-    params.set_n_threads(std::thread::available_parallelism().map(|n| n.get().min(8) as i32).unwrap_or(4));
-    // Each window on its own: carrying text between windows makes Whisper repeat itself on long recordings.
-    params.set_no_context(true);
-    params.set_suppress_blank(true);
-    // One segment per word, each with its own start and end.
-    params.set_token_timestamps(true);
-    params.set_max_len(1);
-    params.set_split_on_word(true);
-    params.set_print_special(false);
-    params.set_print_progress(false);
-    params.set_print_realtime(false);
-    params.set_print_timestamps(false);
-    let progress_app = app.clone();
-    params.set_progress_callback_safe(move |percent: i32| progress(&progress_app, "transcribe", percent as f32 / 100.0));
-    let abort = cancel.clone();
-    // Passed as a boxed closure: that's the type whisper-rs reads the callback back as.
-    let abort_callback: Box<dyn FnMut() -> bool> = Box::new(move || abort.load(Ordering::SeqCst));
-    params.set_abort_callback_safe(abort_callback);
-
-    // whisper.cpp needs at least a second of audio.
-    let mut input = audio;
-    if input.len() < SAMPLE_RATE * 6 / 5 {
-        input.resize(SAMPLE_RATE * 6 / 5, 0.0);
-    }
-    progress(&app, "transcribe", 0.0);
-    if let Err(e) = state.full(params, &input) {
-        return Err(if cancel.load(Ordering::SeqCst) { "Cancelled".into() } else { format!("Transcription failed: {e}") });
-    }
-    if cancel.load(Ordering::SeqCst) {
-        return Err("Cancelled".into());
-    }
-
+    let ranges = windows(&audio);
+    let count = ranges.len();
     let mut words = Vec::new();
-    for segment in state.as_iter() {
-        let text = segment.to_str_lossy().map_err(|e| e.to_string())?.trim().to_string();
-        // Skip empty pieces and Whisper's sound tags like "[BLANK_AUDIO]" or "(music)".
-        if text.is_empty() || text.starts_with('[') || text.starts_with('(') {
+    progress(&app, "transcribe", 0.0);
+    for (index, &(a, b)) in ranges.iter().enumerate() {
+        if cancel.load(Ordering::SeqCst) {
+            return Err("Cancelled".into());
+        }
+        let offset = a as f32 / SAMPLE_RATE as f32;
+        let window = &audio[a..b];
+        // Nothing to hear: skip the pass (and the text Whisper would invent for silence).
+        if rms(window, 0.0, window.len() as f32 / SAMPLE_RATE as f32) < SILENCE_RMS {
+            progress(&app, "transcribe", (index + 1) as f32 / count as f32);
             continue;
         }
-        let start = segment.start_timestamp() as f32 / 100.0;
-        let end = (segment.end_timestamp() as f32 / 100.0).max(start + 0.05);
-        if rms(&input, start - 0.2, end + 0.2) < SILENCE_RMS {
-            continue;
+
+        let mut params = FullParams::new(SamplingStrategy::Greedy { best_of: 1 });
+        params.set_language(Some(&language));
+        params.set_translate(false);
+        params.set_n_threads(std::thread::available_parallelism().map(|n| n.get().min(8) as i32).unwrap_or(4));
+        // Each window on its own: carrying text between windows makes Whisper repeat itself.
+        params.set_no_context(true);
+        params.set_suppress_blank(true);
+        params.set_no_speech_thold(0.6);
+        // One segment per word, each with its own start and end.
+        params.set_token_timestamps(true);
+        params.set_max_len(1);
+        params.set_split_on_word(true);
+        params.set_print_special(false);
+        params.set_print_progress(false);
+        params.set_print_realtime(false);
+        params.set_print_timestamps(false);
+        let progress_app = app.clone();
+        params.set_progress_callback_safe(move |percent: i32| progress(&progress_app, "transcribe", (index as f32 + percent as f32 / 100.0) / count as f32));
+        let abort = cancel.clone();
+        // Passed as a boxed closure: that's the type whisper-rs reads the callback back as.
+        let abort_callback: Box<dyn FnMut() -> bool> = Box::new(move || abort.load(Ordering::SeqCst));
+        params.set_abort_callback_safe(abort_callback);
+
+        // whisper.cpp needs at least a second of audio.
+        let mut input = window.to_vec();
+        if input.len() < SAMPLE_RATE * 6 / 5 {
+            input.resize(SAMPLE_RATE * 6 / 5, 0.0);
         }
-        let (start, end) = tighten(&input, start, end);
-        words.push(Word { start, end, text });
+        if let Err(e) = state.full(params, &input) {
+            return Err(if cancel.load(Ordering::SeqCst) { "Cancelled".into() } else { format!("Transcription failed: {e}") });
+        }
+        if cancel.load(Ordering::SeqCst) {
+            return Err("Cancelled".into());
+        }
+
+        for segment in state.as_iter() {
+            let text = segment.to_str_lossy().map_err(|e| e.to_string())?.trim().to_string();
+            // Skip empty pieces and Whisper's sound tags like "[BLANK_AUDIO]" or "(music)".
+            if text.is_empty() || text.starts_with('[') || text.starts_with('(') {
+                continue;
+            }
+            if segment.no_speech_probability() > NO_SPEECH {
+                continue;
+            }
+            let start = segment.start_timestamp() as f32 / 100.0;
+            let end = (segment.end_timestamp() as f32 / 100.0).max(start + 0.05);
+            if rms(&input, start - 0.2, end + 0.2) < SILENCE_RMS {
+                continue;
+            }
+            let (start, end) = tighten(&input, start, end);
+            words.push(Word { start: start + offset, end: end + offset, text });
+        }
     }
     Ok(words)
 }

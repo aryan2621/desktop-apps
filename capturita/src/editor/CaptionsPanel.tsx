@@ -66,7 +66,8 @@ export function CaptionsPanel({
     onSeek: (source: number) => void;
 }) {
     const available = speechSources(project);
-    const [sources, setSources] = useState<Sources>(available.length > 1 ? 'both' : (available[0] ?? 'microphone'));
+    // Your voice by default: system audio often has music or a video playing, which isn't what you said.
+    const [sources, setSources] = useState<Sources>(available[0] ?? 'microphone');
     const [progress, setProgress] = useState<CaptionProgress | null>(null);
     const [modelMb, setModelMb] = useState<number | null>(null);
     const listRef = useRef<HTMLDivElement>(null);
@@ -180,8 +181,8 @@ export function CaptionsPanel({
                     <label className='block space-y-1'>
                         <span className='text-xs text-muted'>Whose voice</span>
                         <Select value={sources} onChange={(e) => setSources(e.target.value as Sources)}>
-                            <option value='both'>Microphone and system audio</option>
                             <option value='microphone'>Microphone only (you)</option>
+                            <option value='both'>Microphone and system audio</option>
                             <option value='system'>System audio only (calls, videos)</option>
                         </Select>
                     </label>
