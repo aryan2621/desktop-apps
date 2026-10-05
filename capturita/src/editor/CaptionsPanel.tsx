@@ -70,6 +70,8 @@ export function CaptionsPanel({
     const [sources, setSources] = useState<Sources>(available[0] ?? 'microphone');
     const [progress, setProgress] = useState<CaptionProgress | null>(null);
     const [modelMb, setModelMb] = useState<number | null>(null);
+    /** Redo shows the caption settings again before replacing the current captions. */
+    const [redoing, setRedoing] = useState(false);
     const listRef = useRef<HTMLDivElement>(null);
     const style = captions.style;
     const items = captions.items;
@@ -91,7 +93,7 @@ export function CaptionsPanel({
     }, [selectedId]);
 
     const generate = async () => {
-        if (items.length > 0 && !window.confirm('Replace the current captions, including your edits?')) return;
+        setRedoing(false);
         setProgress({ phase: modelMb ? 'download' : 'load', progress: 0 });
         try {
             const made = await makeCaptions(project, captions.language, sourceKinds(sources));
@@ -162,11 +164,15 @@ export function CaptionsPanel({
         );
     }
 
-    if (items.length === 0) {
+    if (items.length === 0 || redoing) {
         return (
             <section className='space-y-3'>
                 {header}
-                <p className='text-xs text-muted'>Turn what's said in the recording into captions, on this Mac. You can fix any word afterwards.</p>
+                {redoing ? (
+                    <p className='rounded-lg bg-warning-soft p-2.5 text-xs text-warning-fg'>Making captions again replaces the current {items.length} captions, including any words you fixed.</p>
+                ) : (
+                    <p className='text-xs text-muted'>Turn what's said in the recording into captions, on this Mac. You can fix any word afterwards.</p>
+                )}
                 <label className='block space-y-1'>
                     <span className='text-xs text-muted'>Language spoken</span>
                     <Select value={captions.language} onChange={(e) => onChange({ ...captions, language: e.target.value }, 'captions-language')}>
@@ -187,9 +193,16 @@ export function CaptionsPanel({
                         </Select>
                     </label>
                 )}
-                <Button variant='primary' className='w-full' onClick={generate}>
-                    <CaptionsIcon className='h-4 w-4' /> Make captions
-                </Button>
+                <div className='flex gap-2'>
+                    {redoing && (
+                        <Button variant='ghost' onClick={() => setRedoing(false)}>
+                            Cancel
+                        </Button>
+                    )}
+                    <Button variant='primary' className='flex-1' onClick={generate}>
+                        <CaptionsIcon className='h-4 w-4' /> Make captions
+                    </Button>
+                </div>
                 {modelMb && <p className='text-xs text-muted'>The first time, this downloads the speech model ({modelMb} MB). After that it works offline.</p>}
             </section>
         );
@@ -279,7 +292,7 @@ export function CaptionsPanel({
                 <Button className='flex-1' onClick={saveSrt} title='Save as a subtitle file for YouTube and video players'>
                     <FileDown className='h-4 w-4' /> Save .srt
                 </Button>
-                <Button variant='ghost' onClick={generate} title='Make the captions again from the audio'>
+                <Button variant='ghost' onClick={() => setRedoing(true)} title='Make the captions again, choosing the language and whose voice'>
                     <RefreshCw className='h-4 w-4' /> Redo
                 </Button>
             </div>
