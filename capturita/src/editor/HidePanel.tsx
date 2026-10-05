@@ -6,6 +6,7 @@ const ICONS: Record<HideStyle, typeof Grid3x3> = { pixelate: Grid3x3, blur: Drop
 
 /** Settings for hiding private parts of the screen (emails, keys, chats…). */
 export function HidePanel({
+    bare = false,
     hides,
     selected,
     duration,
@@ -13,6 +14,8 @@ export function HidePanel({
     onChange,
     onDelete,
 }: {
+    /** Leave out the section header (when shown under the selected item's own header). */
+    bare?: boolean;
     hides: HideRegion[];
     selected: HideRegion | null;
     /** Length of the recording, for "whole video". */
@@ -23,15 +26,14 @@ export function HidePanel({
 }) {
     return (
         <section className='space-y-3'>
-            <div className='flex items-center justify-between'>
-                <h3 className='flex items-center gap-2 text-xs font-medium uppercase tracking-wide text-muted'>
-                    <EyeOff className='h-3.5 w-3.5' />
-                    Hide
-                </h3>
-                <Button size='icon' variant='ghost' className='h-8 w-8' onClick={onAdd} title='Hide part of the screen at the playhead (H)' aria-label='Hide part of the screen'>
-                    <EyeOff className='h-4 w-4' />
-                </Button>
-            </div>
+            {!bare && (
+                <div className='flex min-h-8 items-center justify-between'>
+                    <h3 className='flex items-center gap-2 text-xs font-medium uppercase tracking-wide text-muted'>
+                        <EyeOff className='h-3.5 w-3.5' />
+                        Hide private info
+                    </h3>
+                </div>
+            )}
 
             {!selected ? (
                 <div className='space-y-3'>
@@ -39,7 +41,7 @@ export function HidePanel({
                         {hides.length === 0 ? 'Nothing hidden yet.' : `${hides.length} hidden area${hides.length === 1 ? '' : 's'} on the timeline.`} Cover emails, passwords, keys
                         or chats: add a box at the playhead, drag it over the private part on the preview, and set how long it stays on the timeline.
                     </p>
-                    <Button variant='primary' className='w-full' onClick={onAdd}>
+                    <Button className='w-full' onClick={onAdd} title='Hide part of the screen at the playhead (H)'>
                         <EyeOff className='h-4 w-4' /> Hide part of the screen
                     </Button>
                 </div>
@@ -82,9 +84,11 @@ export function HidePanel({
                         >
                             <Maximize2 className='h-4 w-4' /> Whole video
                         </Button>
-                        <Button variant='ghost' onClick={() => onDelete(selected.id)} title='Remove this hidden area (⌫)'>
-                            <Trash2 className='h-4 w-4' /> Remove
-                        </Button>
+                        {!bare && (
+                            <Button variant='ghost' onClick={() => onDelete(selected.id)} title='Remove this hidden area (⌫)'>
+                                <Trash2 className='h-4 w-4' /> Remove
+                            </Button>
+                        )}
                     </div>
                     <p className='text-xs text-muted'>Drag the box on the preview to move it, or a corner to resize. It follows zooms and crops, and is baked into every export.</p>
                 </div>

@@ -107,12 +107,17 @@ pub struct UploadRequest {
     description: String,
     /// YouTube only: "private", "unlisted" or "public".
     privacy: Option<String>,
+    /// YouTube only: a recording's custom thumbnail (its thumb.jpg), set after the upload.
+    thumbnail: Option<String>,
 }
 
 #[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
 pub struct UploadResult {
     id: String,
     url: String,
+    /// Why the custom thumbnail couldn't be set (the video itself uploaded fine).
+    thumbnail_error: Option<String>,
 }
 
 #[derive(Default)]
@@ -303,6 +308,31 @@ impl Google {
         Ok(account)
     }
 
+    /// Sets a YouTube video's thumbnail. YouTube allows custom thumbnails only on channels
+    /// verified by phone; otherwise it answers 403 and the video keeps an automatic one.
+    async fn set_thumbnail(&self, app: &AppHandle, video: &str, path: &str) -> Result<(), String> {
+        let file = std::fs::canonicalize(path).map_err(|e| e.to_string())?;
+        let root = std::fs::canonicalize(crate::recording::recordings_root(app)?).map_err(|e| e.to_string())?;
+        if !file.starts_with(&root) || file.file_name().and_then(|n| n.to_str()) != Some("thumb.jpg") {
+            return Err("Only a recording's thumbnail can be used".into());
+        }
+        let image = tokio::fs::read(&file).await.map_err(|e| e.to_string())?;
+        let response = self
+            .http
+            .post(format!("https://www.googleapis.com/upload/youtube/v3/thumbnails/set?videoId={video}"))
+            .bearer_auth(self.access_token(app).await?)
+            .header(reqwest::header::CONTENT_TYPE, "image/jpeg")
+            .body(image)
+            .send()
+            .await
+            .map_err(|e| format!("Couldn't reach YouTube: {e}"))?;
+        match response.status() {
+            status if status.is_success() => Ok(()),
+            StatusCode::FORBIDDEN => Err("YouTube allows custom thumbnails only on channels verified by phone (youtube.com/verify). The video uses an automatic one.".into()),
+            _ => Err(google_error(response).await),
+        }
+    }
+
     async fn upload(&self, app: &AppHandle, request: UploadRequest) -> Result<UploadResult, String> {
         self.cancel.store(false, Ordering::SeqCst);
         let size = tokio::fs::metadata(&request.path).await.map_err(|e| e.to_string())?.len();
@@ -393,7 +423,11 @@ impl Google {
                             .map(str::to_string)
                             .unwrap_or_else(|| format!("https://drive.google.com/file/d/{id}/view")),
                     };
-                    return Ok(UploadResult { id, url });
+                    let thumbnail_error = match (&request.destination, &request.thumbnail) {
+                        (Destination::Youtube, Some(path)) => self.set_thumbnail(app, &id, path).await.err(),
+                        _ => None,
+                    };
+                    return Ok(UploadResult { id, url, thumbnail_error });
                 }
                 308 => {
                     retries = 0;

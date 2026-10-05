@@ -20,9 +20,9 @@ import {
     X,
 } from 'lucide-react';
 import { toast } from 'sonner';
-import { api, errorMessage, type AiModels, type CaptionProgress, type GoogleStatus } from '../lib/api';
+import { api, errorMessage, type AiModels, type CaptionModel, type CaptionProgress, type GoogleStatus } from '../lib/api';
 import { useTheme, type ThemeChoice } from '../lib/theme';
-import { Button, IconButton, Segmented, cx } from './ui';
+import { Button, IconButton, Modal, ProgressBar, Segmented, cx } from './ui';
 
 export type SettingsSection = 'general' | 'ai' | 'captions' | 'google';
 
@@ -47,55 +47,39 @@ export function SettingsDialog({
 }) {
     const [section, setSection] = useState<SettingsSection>(initialSection);
 
-    useEffect(() => {
-        const onKey = (event: KeyboardEvent) => {
-            if (event.key === 'Escape') {
-                event.stopPropagation();
-                onClose();
-            }
-        };
-        document.addEventListener('keydown', onKey, true);
-        return () => document.removeEventListener('keydown', onKey, true);
-    }, [onClose]);
-
     return (
-        <div
-            className='fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-6 backdrop-blur-sm'
-            onPointerDown={(e) => e.target === e.currentTarget && onClose()}
-        >
-            <div className='flex h-[560px] max-h-full w-full max-w-[760px] overflow-hidden rounded-2xl border border-line bg-panel shadow-[var(--shadow-lg)]'>
-                <nav className='flex w-48 shrink-0 flex-col gap-1 border-r border-line bg-panel-2 p-3'>
-                    <span className='px-2 pb-3 pt-1 font-serif text-[17px] font-medium tracking-tight'>Settings</span>
-                    {SECTIONS.map((s) => (
-                        <button
-                            key={s.id}
-                            onClick={() => setSection(s.id)}
-                            className={cx(
-                                'flex cursor-default items-center gap-2.5 rounded-lg px-2.5 py-2 text-left text-sm transition-colors',
-                                section === s.id ? 'bg-raised font-medium text-fg' : 'text-muted hover:bg-raised/60 hover:text-fg'
-                            )}
-                        >
-                            {s.icon}
-                            {s.label}
-                        </button>
-                    ))}
-                </nav>
-                <div className='flex min-w-0 flex-1 flex-col'>
-                    <div className='flex items-center justify-between border-b border-line px-6 py-3.5'>
-                        <h2 className='text-sm font-medium'>{SECTIONS.find((s) => s.id === section)?.label}</h2>
-                        <IconButton label='Close settings' size='icon-sm' onClick={onClose}>
-                            <X className='h-4 w-4' />
-                        </IconButton>
-                    </div>
-                    <div className='min-h-0 flex-1 overflow-y-auto p-6'>
-                        {section === 'general' && <General onRunSetup={onRunSetup} />}
-                        {section === 'ai' && <AiModelsSection />}
-                        {section === 'captions' && <CaptionsSection />}
-                        {section === 'google' && <GoogleSection />}
-                    </div>
+        <Modal onClose={onClose} className='flex h-[560px] max-w-[760px]'>
+            <nav className='flex w-48 shrink-0 flex-col gap-1 border-r border-line bg-panel-2 p-3'>
+                <span className='px-2 pb-3 pt-1 font-serif text-[17px] font-medium tracking-tight'>Settings</span>
+                {SECTIONS.map((s) => (
+                    <button
+                        key={s.id}
+                        onClick={() => setSection(s.id)}
+                        className={cx(
+                            'flex cursor-default items-center gap-2.5 rounded-lg px-2.5 py-2 text-left text-sm transition-colors',
+                            section === s.id ? 'bg-raised font-medium text-fg' : 'text-muted hover:bg-raised/60 hover:text-fg'
+                        )}
+                    >
+                        {s.icon}
+                        {s.label}
+                    </button>
+                ))}
+            </nav>
+            <div className='flex min-w-0 flex-1 flex-col'>
+                <div className='flex items-center justify-between border-b border-line px-6 py-3.5'>
+                    <h2 className='text-sm font-medium'>{SECTIONS.find((s) => s.id === section)?.label}</h2>
+                    <IconButton label='Close settings' size='icon-sm' onClick={onClose}>
+                        <X className='h-4 w-4' />
+                    </IconButton>
+                </div>
+                <div className='min-h-0 flex-1 overflow-y-auto p-6'>
+                    {section === 'general' && <General onRunSetup={onRunSetup} />}
+                    {section === 'ai' && <AiModelsSection />}
+                    {section === 'captions' && <CaptionsSection />}
+                    {section === 'google' && <GoogleSection />}
                 </div>
             </div>
-        </div>
+        </Modal>
     );
 }
 
@@ -111,16 +95,7 @@ function Row({ title, description, children }: { title: string; description?: Re
     );
 }
 
-function Progress({ value }: { value: number }) {
-    return (
-        <div className='flex items-center gap-2'>
-            <div className='h-1.5 flex-1 overflow-hidden rounded-full bg-line'>
-                <div className='h-full bg-accent transition-[width]' style={{ width: `${Math.round(value * 100)}%` }} />
-            </div>
-            <span className='w-9 text-right font-mono text-xs text-muted'>{Math.round(value * 100)}%</span>
-        </div>
-    );
-}
+const Progress = ProgressBar;
 
 function General({ onRunSetup }: { onRunSetup?: () => void }) {
     const { choice, setChoice } = useTheme();
@@ -270,22 +245,20 @@ function AiModelsSection() {
 }
 
 function CaptionsSection() {
-    const [model, setModel] = useState<{
-        downloaded: boolean;
-        sizeMb: number;
-    } | null>(null);
-    const [progress, setProgress] = useState<number | null>(null);
+    const [models, setModels] = useState<CaptionModel[] | null>(null);
+    /** The model being downloaded, and how far along it is. */
+    const [downloading, setDownloading] = useState<{ id: string; progress: number } | null>(null);
 
     const refresh = useCallback(() => {
-        api.captionModel()
-            .then(setModel)
+        api.captionModels()
+            .then(setModels)
             .catch((error) => toast.error(errorMessage(error)));
     }, []);
 
     useEffect(() => {
         refresh();
         const unlisten = listen<CaptionProgress>('captions-progress', ({ payload }) => {
-            if (payload.phase === 'download') setProgress(payload.progress);
+            if (payload.phase === 'download') setDownloading((d) => (d ? { ...d, progress: payload.progress } : d));
         });
         return () => {
             unlisten.then((u) => u());
@@ -299,58 +272,82 @@ function CaptionsSection() {
             const message = errorMessage(error);
             if (message !== 'Cancelled') toast.error(message);
         }
-        setProgress(null);
         refresh();
     };
+    /** Use a model; download it first if it isn't here yet. */
+    const use = (model: CaptionModel) =>
+        run(async () => {
+            if (!model.downloaded) {
+                setDownloading({ id: model.id, progress: 0 });
+                try {
+                    await api.downloadCaptionModel(model.id);
+                } finally {
+                    setDownloading(null);
+                }
+            }
+            await api.selectCaptionModel(model.id);
+            toast.success(`Captions now use ${model.label}`);
+        });
 
-    if (!model) return null;
+    if (!models) return null;
     return (
         <div className='space-y-4'>
             <p className='text-sm text-muted'>
-                Captions are made from what's said in a recording, on this Mac, with Whisper (large-v3 turbo). Nothing is uploaded. AI editing uses them too.
+                Captions are made on this Mac with Whisper; nothing is uploaded. Bigger models are more accurate (especially for Hindi, accents and mixed languages) but slower
+                and larger. English-only models only caption English. AI editing uses the same model.
             </p>
-            <div className='space-y-3 rounded-xl border border-line p-4'>
-                <div className='flex items-center gap-3'>
-                    <span
-                        className={cx(
-                            'flex h-8 w-8 shrink-0 items-center justify-center rounded-lg',
-                            model.downloaded ? 'bg-success-soft text-success-fg' : 'bg-raised text-muted'
-                        )}
-                    >
-                        {model.downloaded ? <Check className='h-4 w-4' /> : <Captions className='h-4 w-4' />}
-                    </span>
-                    <div className='min-w-0 flex-1'>
-                        <p className='text-sm font-medium'>{model.downloaded ? 'Speech model ready' : 'Speech model'}</p>
-                        <p className='text-xs text-muted'>
-                            {model.sizeMb} MB · {model.downloaded ? 'captions work offline' : 'downloads the first time you make captions, or now'}
-                        </p>
-                    </div>
-                    {model.downloaded ? (
-                        <IconButton
-                            label={`Delete the speech model (frees ${model.sizeMb} MB)`}
-                            size='icon-sm'
-                            onClick={() => run(() => api.deleteCaptionModel())}
-                        >
-                            <Trash2 className='h-3.5 w-3.5' />
-                        </IconButton>
-                    ) : progress !== null ? (
-                        <Button size='sm' variant='ghost' onClick={() => api.cancelTranscription()}>
-                            <X className='h-3.5 w-3.5' /> Cancel
-                        </Button>
-                    ) : (
-                        <Button
-                            size='sm'
-                            variant='primary'
-                            onClick={() => {
-                                setProgress(0);
-                                run(() => api.downloadCaptionModel());
-                            }}
-                        >
-                            <Download className='h-3.5 w-3.5' /> Download
-                        </Button>
-                    )}
-                </div>
-                {progress !== null && <Progress value={progress} />}
+            <div className='divide-y divide-line rounded-xl border border-line'>
+                {models.map((model) => {
+                    const busy = downloading?.id === model.id;
+                    return (
+                        <div key={model.id} className='space-y-2 p-3'>
+                            <div className='flex items-center gap-3'>
+                                <span
+                                    className={cx(
+                                        'flex h-8 w-8 shrink-0 items-center justify-center rounded-lg',
+                                        model.selected ? 'bg-accent/15 text-accent' : model.downloaded ? 'bg-success-soft text-success-fg' : 'bg-raised text-muted'
+                                    )}
+                                >
+                                    {model.selected || model.downloaded ? <Check className='h-4 w-4' /> : <Captions className='h-4 w-4' />}
+                                </span>
+                                <div className='min-w-0 flex-1'>
+                                    <p className='flex items-center gap-2 text-sm font-medium'>
+                                        {model.label}
+                                        {model.selected && <span className='rounded-full bg-accent/15 px-2 py-0.5 text-[10px] font-medium text-accent'>In use</span>}
+                                    </p>
+                                    <p className='text-xs text-muted'>
+                                        {model.sizeMb >= 1000 ? `${(model.sizeMb / 1000).toFixed(1)} GB` : `${model.sizeMb} MB`} · {model.note}
+                                    </p>
+                                </div>
+                                {busy ? (
+                                    <Button size='sm' variant='ghost' onClick={() => api.cancelTranscription()}>
+                                        <X className='h-3.5 w-3.5' /> Cancel
+                                    </Button>
+                                ) : (
+                                    <div className='flex shrink-0 items-center gap-1'>
+                                        {!model.selected && (
+                                            <Button size='sm' variant={model.downloaded ? 'secondary' : 'primary'} disabled={!!downloading} onClick={() => use(model)}>
+                                                {model.downloaded ? (
+                                                    'Use'
+                                                ) : (
+                                                    <>
+                                                        <Download className='h-3.5 w-3.5' /> Download
+                                                    </>
+                                                )}
+                                            </Button>
+                                        )}
+                                        {model.downloaded && (
+                                            <IconButton label={`Delete ${model.label} (frees ${model.sizeMb} MB)`} size='icon-sm' disabled={!!downloading} onClick={() => run(() => api.deleteCaptionModel(model.id))}>
+                                                <Trash2 className='h-3.5 w-3.5' />
+                                            </IconButton>
+                                        )}
+                                    </div>
+                                )}
+                            </div>
+                            {busy && <Progress value={downloading.progress} />}
+                        </div>
+                    );
+                })}
             </div>
         </div>
     );
@@ -359,7 +356,7 @@ function CaptionsSection() {
 const GUIDE_URL = 'https://github.com/aryan2621/desktop-apps/blob/main/capturita/docs/google-setup.md';
 
 /** Uploads use the user's own Google Cloud client; the steps to make one live in the guide. */
-function GoogleSection() {
+export function GoogleSection() {
     const [status, setStatus] = useState<GoogleStatus | null>(null);
     const [clientId, setClientId] = useState('');
     const [clientSecret, setClientSecret] = useState('');

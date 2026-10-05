@@ -28,29 +28,47 @@ allowing Screen Recording.
 
 ## Home
 
-Your recordings, newest first, as **cards** or a **table** (switch at the top right of the list;
-Capturita remembers your choice). Click one to see it on the right: a silent preview, when it
-was recorded, its length and size, and which tracks it has, with **Open in editor**, **Show in
-Finder** and **Delete**. Double-click a recording to open it straight away.
+Your recordings, newest first, as a **grid** or a **list** (switch at the top right; Capturita
+remembers your choice). Click a recording to open it in the editor. Each one has **Show in
+Finder** and **Move to Trash** buttons; a deleted recording can be put back from the Trash in Finder.
 
 ## Record
 
-- Click **New recording** (top right) and choose what to record: a **screen**, a **window** or an **area** you drag out.
+- Click **New recording** (top right) and choose **Screen**, **Window** or **Area** at the top, then pick one.
 - **Microphone** with optional **echo cancellation** (keeps speaker sound out of your mic; turn it
   off with headphones for the most natural voice), **system audio**, and a **camera** bubble.
 - The camera bubble can be dragged anywhere. It's recorded separately, so you can move or hide it
   later in the editor.
-- Start and stop with **Record** or **⌘⇧R** from any app. Capturita's window hides while you record.
+- The mic, camera and Mac audio are the chips next to **Record**. Start and stop with **Record**
+  or **⌘⇧R** from any app. Capturita's window hides while you record.
 
 ## Edit
 
 The editor opens when you stop. Nothing you do changes the original recording.
 
-- **Trim and cut:** press **S** to mark a part, **S** again to cut it. Drag clip edges on the timeline.
+The settings are in tabs on the right: **Look**, **Zoom**, **Cursor**, **Camera**, **Audio**,
+**Captions**, **Annotate** (text and hidden areas) and **AI**. Selecting a zoom, text or hidden
+area on the timeline shows its own settings there (**Esc** or the back arrow returns).
+**Aspect ratio** and **Crop** are at the top.
+
+- **Trim, split and cut:** drag clip edges on the timeline. **S** splits the clip at the playhead;
+  **C** marks a part, **C** again cuts it.
 - **Speed:** speed up any clip.
-- **Auto-zoom:** zooms follow your cursor and clicks automatically; add, move or remove them on the timeline.
-- **Cursor:** cursor styles and click effects.
-- **Look:** backgrounds, padding, rounded corners and shadow; crop the recording.
+- **Zoom:** a new recording gets zooms around your clicks (re-make them with **Auto zoom**). The
+  camera eases in with a spring, pans to keep the cursor in view, and glides between nearby
+  zooms. Click an empty spot on the **Zoom** lane (or press **Z**) to add one; drag a zoom to move
+  it, drag its edges to resize it, right-click for **Make instant** or **Fixed point**. A
+  fixed-point zoom shows a box on the preview to drag where it should zoom. **Camera:** Smooth or
+  Focused; **Motion blur** is added to zooms in the export.
+- **Cursor:** arrow, hand or dot; **Mellow**, **Smooth**, **Quick** or **Off** movement (hand
+  shake is removed, and the cursor lands exactly on each click); hide it when it isn't moving;
+  click ripple or pulse in any colour; click sounds.
+- **Look:** gradients, colours or your own image (with blur) as the background; padding, rounded
+  corners and shadow.
+- **Camera:** corner, size, circle or rounded, and **Shrink while zoomed in**.
+
+Busy, full-size Retina recordings are previewed from a lighter 1080p copy, made the first time
+you open them ("Preparing a smooth preview…"). Exports always use the original.
 
 ## Text
 
@@ -59,9 +77,12 @@ word by word. Press **T** to add text at the playhead.
 
 ## Captions
 
-Made from what's said in the recording, on this Mac (Whisper; the model downloads once, 547 MB).
-Fix any word, style them (font, size, box or shadow, highlight the word being spoken), burn them
-into the video and/or save an `.srt` file.
+Made on this Mac with Whisper (the speech model downloads once; choose another in **Settings →
+Captions**). **Caption what:** your **microphone** (the default), the Mac's **system audio** (a
+video or a call), or **both**: each is transcribed on its own, in its own language. Fix any word,
+style them (font, size, box or shadow, highlight the word being spoken), burn them into the
+video and/or save an `.srt` file. **Redo** makes them again, letting you change the language or
+what to caption.
 
 ## Hide private info
 
@@ -94,9 +115,13 @@ One-click clean-ups remove **filler words** ("um", "uh") and **long pauses**.
 
 **⌘E** opens export. Choose:
 
-- **Where:** **File** (an MP4 on this Mac), **YouTube** or **Drive** (exported, then uploaded).
+- **Where:** **File** (on this Mac), **YouTube** or **Drive** (exported, then uploaded).
+- **Preset:** **Web** (1080p, 30 fps), **Studio** (4K, 60 fps), **Social** (1080p, 60 fps),
+  **Small** (720p, 30 fps) or **GIF** (480p, 15 fps, silent, loops). **Customize** sets the format
+  (MP4 or GIF), resolution, frame rate and quality yourself.
 - **File name:** type any name. If a file with that name exists, a number is added; nothing is overwritten.
-- **Resolution:** 720p, 1080p or 4K. **Frame rate:** 30 (smaller) or 60 (smoother).
+
+When it's done, **Copy** puts the file on the clipboard to paste into Slack, Mail or Finder.
 
 **Connecting Google (for YouTube and Drive):** uploads use your own free Google Cloud project,
 so no shared key ships with the app and your keys stay in your Mac's Keychain. It's a one-time,
@@ -112,7 +137,17 @@ Open with ⚙ in the header.
 
 - **General:** light, dark or follow macOS; open the recordings folder; run setup again.
 - **AI editing:** download, choose or delete AI models (see [AI editing](#ai-editing)).
-- **Captions:** download or delete the speech model (547 MB).
+- **Captions:** the speech model captions use, the same seven as Murmur:
+
+  | Model | Download | |
+  |---|---|---|
+  | Large v3 Turbo (default) | 547 MB | Best accuracy for its speed |
+  | Large v3 Turbo (full) | 1.6 GB | Marginally more accurate |
+  | Large v3 | 1.1 GB | Slower; the most careful with accents and mixed languages |
+  | Small (multilingual) | 466 MB | Fast; good for Hindi |
+  | Small / Base / Tiny (English) | 466 / 142 / 75 MB | Faster, English only |
+
+  **Use** switches (downloading first if needed); the bin icon deletes a downloaded one.
 - **Google:** your Client ID and Client Secret for uploads, who you're signed in as, sign out.
 
 ## Shortcuts
@@ -123,10 +158,13 @@ Press **?** in the editor to see these.
 |---|---|
 | **Space** | Play / pause |
 | **← / →** | Back / forward 5 seconds |
-| **S** | Mark a part to cut, then cut it (**Esc** cancels) |
+| **S** | Split the clip at the playhead |
+| **C** | Mark a part to cut, then cut it (**Esc** cancels) |
+| **Z** | Add a zoom at the playhead |
 | **T** | Add text at the playhead |
 | **H** | Hide part of the screen at the playhead |
 | **⌫** | Delete the selected clip, zoom, text, hidden area or caption |
+| **Esc** | Deselect |
 | **⌘Z / ⌘⇧Z** | Undo / redo |
 | **⌘+ / ⌘− / ⌘0** | Zoom the timeline in / out / fit |
 | **⌥** while dragging | Skip snapping |
@@ -136,7 +174,9 @@ Press **?** in the editor to see these.
 ## Your files
 
 - Recordings: `~/Movies/Capturita`
-- Exports (MP4 and `.srt`): `~/Movies/Capturita/Exports`
+- Exports (MP4, GIF and `.srt`): `~/Movies/Capturita/Exports`
+- Each recording's folder also holds `thumb.jpg` (the library picture) and `screen-preview.mp4`
+  (the smooth preview copy); both are remade if deleted
 - Google Client ID, Client Secret and sign-in: the macOS Keychain
 - AI and speech models: `~/Library/Application Support/com.capturita.app/models`
 
@@ -147,6 +187,9 @@ Press **?** in the editor to see these.
 - **Stopped recording after an update:** macOS can forget permissions for unsigned apps. Remove
   Capturita from Screen Recording, add it back, and reopen.
 - **Your voice echoes or sounds thin:** with headphones, turn **Echo cancellation** off.
+- **Captions in the wrong language:** pick the **Language spoken** after **Redo** instead of
+  "Detect automatically". English-only speech models always caption in English.
+- **Captions include a video playing on screen:** choose **Microphone only (you)** under **Caption what**.
 - **Upload says "Connect Google first", or another Google error:** see the
   [Google setup guide](google-setup.md#troubleshooting).
 - **macOS asks to allow Keychain access after an update:** click **Always Allow**.

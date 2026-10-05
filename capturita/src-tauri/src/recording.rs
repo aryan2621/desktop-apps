@@ -303,8 +303,10 @@ fn project_dir(app: &AppHandle, id: &str) -> Result<PathBuf, String> {
 }
 
 #[tauri::command]
-pub fn delete_recording(app: AppHandle, id: String) -> Result<(), String> {
-    std::fs::remove_dir_all(project_dir(&app, &id)?).map_err(|e| e.to_string())
+pub async fn delete_recording(app: AppHandle, helper: State<'_, Helper>, id: String) -> Result<(), String> {
+    // To the Trash, not erased: Delete is one click, so it has to be recoverable.
+    let dir = project_dir(&app, &id)?;
+    helper.call(&app, "trash", json!({ "path": dir.to_string_lossy() }), Some(Duration::from_secs(30))).await.map(|_| ())
 }
 
 /// The editor's changes (edit.json), or nothing if the recording hasn't been edited yet.
@@ -355,6 +357,56 @@ pub fn import_music(app: AppHandle, request: tauri::ipc::Request<'_>) -> Result<
     let file = format!("music.{ext}");
     std::fs::write(dir.join(&file), bytes).map_err(|e| e.to_string())?;
     Ok(file)
+}
+
+/// Copies an image into the project folder as `background-<time>.<ext>` (replacing any earlier
+/// one) to use as the video's background. A new name each time keeps the webview from showing a
+/// cached copy of the previous image.
+#[tauri::command]
+pub fn import_background(app: AppHandle, request: tauri::ipc::Request<'_>) -> Result<String, String> {
+    let tauri::ipc::InvokeBody::Raw(bytes) = request.body() else {
+        return Err("Expected raw bytes".into());
+    };
+    let header = |key: &str| request.headers().get(key).and_then(|v| v.to_str().ok()).map(str::to_string);
+    let id = header("id").ok_or("Missing id header")?;
+    let name = header("name").unwrap_or_default().replace("%2E", ".").replace("%2e", ".");
+    let ext = std::path::Path::new(&name)
+        .extension()
+        .and_then(|e| e.to_str())
+        .map(str::to_ascii_lowercase)
+        .filter(|e| ["png", "jpg", "jpeg", "webp", "gif", "heic"].contains(&e.as_str()))
+        .ok_or("Choose an image (PNG, JPEG, WebP, HEIC)")?;
+    let dir = project_dir(&app, &id)?;
+    for entry in std::fs::read_dir(&dir).map_err(|e| e.to_string())?.flatten() {
+        if entry.file_name().to_string_lossy().starts_with("background-") {
+            let _ = std::fs::remove_file(entry.path());
+        }
+    }
+    let file = format!("background-{}.{ext}", chrono::Local::now().timestamp_millis());
+    std::fs::write(dir.join(&file), bytes).map_err(|e| e.to_string())?;
+    Ok(file)
+}
+
+/// Makes `screen-preview.mp4`, a 1080p copy of the screen video that the editor plays smoothly
+/// (exports still use the original). Returns its file name; quick if it already exists.
+#[tauri::command]
+pub async fn make_preview(app: AppHandle, helper: State<'_, Helper>, id: String) -> Result<String, String> {
+    let dir = project_dir(&app, &id)?;
+    let result = helper.call(&app, "makePreview", serde_json::json!({ "dir": dir.to_string_lossy() }), None).await?;
+    result.as_str().map(str::to_string).ok_or_else(|| "Unexpected reply while making the preview".into())
+}
+
+/// Saves the library poster frame (a small JPEG made by the webview) as `thumb.jpg` in the project.
+#[tauri::command]
+pub fn save_thumbnail(app: AppHandle, request: tauri::ipc::Request<'_>) -> Result<(), String> {
+    let tauri::ipc::InvokeBody::Raw(bytes) = request.body() else {
+        return Err("Expected raw bytes".into());
+    };
+    let id = request.headers().get("id").and_then(|v| v.to_str().ok()).ok_or("Missing id header")?;
+    if bytes.len() > 2 * 1024 * 1024 || !bytes.starts_with(&[0xff, 0xd8]) {
+        return Err("Expected a small JPEG".into());
+    }
+    std::fs::write(project_dir(&app, id)?.join("thumb.jpg"), bytes).map_err(|e| e.to_string())
 }
 
 /// Appends a diagnostic line from the webview to ~/Library/Logs/com.capturita.app/webview.log.

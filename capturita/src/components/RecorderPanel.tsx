@@ -241,118 +241,32 @@ export function RecorderPanel({
     const mode = MODES.find((m) => m.value === settings.mode) ?? MODES[0];
 
     return (
-        // No overflow-hidden here: the microphone and camera menus open past the sidebar's edge.
-        <section className='flex h-full w-full rounded-2xl border border-line bg-panel shadow-[var(--shadow-lg)]'>
-            <nav className='flex w-60 shrink-0 flex-col gap-1 rounded-l-2xl border-r border-line bg-panel-2 p-3'>
-                <span className='px-2 pb-3 pt-1 font-serif text-[17px] font-medium tracking-tight'>New recording</span>
-                {MODES.map((m) => (
-                    <button
-                        key={m.value}
-                        onClick={() => update({ mode: m.value })}
-                        title={m.hint}
-                        className={cx(
-                            'flex cursor-default items-center gap-2.5 rounded-lg px-2.5 py-2 text-left text-sm transition-colors',
-                            settings.mode === m.value ? 'bg-raised font-medium text-fg' : 'text-muted hover:bg-raised/60 hover:text-fg'
-                        )}
-                    >
-                        {m.icon}
-                        {m.label}
-                    </button>
-                ))}
-                <div className='mt-auto space-y-2'>
-                    <p className='px-2 text-[11px] font-semibold uppercase tracking-wider text-subtle'>Sound and camera</p>
-                    <ToggleChip
-                        active={settings.systemAudio}
-                        onClick={() => update({ systemAudio: !settings.systemAudio })}
-                        label='Mac audio'
-                        status={settings.systemAudio ? 'On' : 'Off'}
-                        icon={settings.systemAudio ? <Volume2 className='h-3.5 w-3.5' /> : <VolumeX className='h-3.5 w-3.5' />}
+        // No overflow-hidden here: the microphone and camera menus open past the panel's edge.
+        <section className='flex h-full w-full flex-col rounded-2xl border border-line bg-panel shadow-[var(--shadow-lg)]'>
+            <div className='flex items-center gap-4 border-b border-line px-5 py-3'>
+                <span className='font-serif text-[17px] font-medium tracking-tight'>New recording</span>
+                <div className='mx-auto w-[340px]'>
+                    <Segmented<Mode>
+                        size='sm'
+                        value={settings.mode}
+                        onChange={(value) => update({ mode: value })}
+                        options={MODES.map((m) => ({ value: m.value, label: m.label, icon: m.icon, hint: m.hint }))}
                     />
-                    <Popover
-                        side='top'
-                        align='start'
-                        trigger={(open, toggle) => (
-                            <ToggleChip
-                                active={!!microphone}
-                                pressed={open}
-                                onClick={toggle}
-                                label='Microphone'
-                                status={microphone ? microphone.name : 'Off'}
-                                icon={microphone ? <Mic className='h-3.5 w-3.5' /> : <MicOff className='h-3.5 w-3.5' />}
-                            />
-                        )}
-                    >
-                        {(close) => (
-                            <div className='w-64 space-y-1'>
-                                <MenuHeading>Microphone</MenuHeading>
-                                <MenuItem selected={!settings.microphoneId} onClick={() => (selectMicrophone(''), close())}>
-                                    No microphone
-                                </MenuItem>
-                                {microphones.map((mic) => (
-                                    <MenuItem key={mic.id} selected={mic.id === settings.microphoneId} onClick={() => (selectMicrophone(mic.id), close())}>
-                                        {mic.name}
-                                    </MenuItem>
-                                ))}
-                                {settings.microphoneId && (
-                                    <div className='mt-2 space-y-1 border-t border-line px-2 pt-3'>
-                                        <div className='flex items-center justify-between text-xs'>
-                                            <span>Echo cancellation</span>
-                                            <Switch label='Echo cancellation' checked={settings.echoCancellation} onChange={(echoCancellation) => update({ echoCancellation })} />
-                                        </div>
-                                        <p className='text-[11px] text-muted'>Keeps speaker sound out of your mic. Turn off with headphones for the most natural voice.</p>
-                                    </div>
-                                )}
-                            </div>
-                        )}
-                    </Popover>
-                    <Popover
-                        side='top'
-                        align='start'
-                        trigger={(open, toggle) => (
-                            <ToggleChip
-                                active={cameraVisible && !!camera}
-                                pressed={open}
-                                onClick={toggle}
-                                label='Camera'
-                                status={cameraVisible && camera ? camera.name : 'Off'}
-                                icon={cameraVisible && camera ? <Camera className='h-3.5 w-3.5' /> : <CameraOff className='h-3.5 w-3.5' />}
-                            />
-                        )}
-                    >
-                        {(close) => (
-                            <div className='w-64 space-y-1'>
-                                <MenuHeading>Camera</MenuHeading>
-                                <MenuItem selected={!cameraVisible} onClick={() => (selectCamera(''), close())}>
-                                    No camera
-                                </MenuItem>
-                                {cameras.map((cam) => (
-                                    <MenuItem key={cam.id} selected={cameraVisible && cam.id === settings.cameraId} onClick={() => (selectCamera(cam.id), close())}>
-                                        {cam.name}
-                                    </MenuItem>
-                                ))}
-                                {cameraVisible && <p className='px-2 pt-2 text-[11px] text-muted'>Drag the bubble anywhere. It's recorded separately, so you can move or hide it later.</p>}
-                            </div>
-                        )}
-                    </Popover>
                 </div>
-            </nav>
-
-            <div className='flex min-w-0 flex-1 flex-col'>
-                <div className='flex items-center justify-between border-b border-line px-6 py-3.5'>
-                    <h2 className='text-sm font-medium'>{mode.hint}</h2>
-                    <div className='flex items-center gap-1'>
-                        <IconButton label='Refresh screens and windows' size='icon-sm' onClick={refreshSources} disabled={loadingSources || !screenGranted}>
-                            <RefreshCw className={cx('h-3.5 w-3.5', loadingSources && 'animate-spin')} />
+                <div className='flex items-center gap-1'>
+                    <IconButton label='Refresh screens and windows' size='icon-sm' onClick={refreshSources} disabled={loadingSources || !screenGranted}>
+                        <RefreshCw className={cx('h-3.5 w-3.5', loadingSources && 'animate-spin')} />
+                    </IconButton>
+                    {onClose && (
+                        <IconButton label='Close (Esc)' size='icon-sm' onClick={onClose}>
+                            <X className='h-4 w-4' />
                         </IconButton>
-                        {onClose && (
-                            <IconButton label='Close' size='icon-sm' onClick={onClose}>
-                                <X className='h-4 w-4' />
-                            </IconButton>
-                        )}
-                    </div>
+                    )}
                 </div>
+            </div>
 
-                <div className='min-h-0 flex-1 overflow-y-auto p-6'>
+            <p className='px-6 pt-4 text-xs text-muted'>{mode.hint}</p>
+                <div className='min-h-0 flex-1 overflow-y-auto px-6 pb-6 pt-3'>
                     {!screenGranted ? (
                         <p className='p-6 text-center text-sm text-muted'>Allow screen recording to see your screens and windows here.</p>
                     ) : !sources ? (
@@ -440,28 +354,101 @@ export function RecorderPanel({
                 </div>
 
 
-                <div className='flex items-center justify-between gap-4 rounded-br-2xl border-t border-line px-6 py-3.5'>
-                    <p className={cx('min-w-0 truncate text-xs', notReady ? 'text-warning-fg' : 'text-muted')}>
-                        {notReady ?? (
-                            <>
-                                Records <span className='font-medium text-fg'>{sourceLabel}</span>
-                            </>
+
+            <div className='flex items-center gap-2 rounded-b-2xl border-t border-line bg-panel-2/60 px-5 py-3'>
+                    <ToggleChip
+                        active={settings.systemAudio}
+                        onClick={() => update({ systemAudio: !settings.systemAudio })}
+                        label='Mac audio'
+                        status={settings.systemAudio ? 'Mac audio' : 'Off'}
+                        icon={settings.systemAudio ? <Volume2 className='h-3.5 w-3.5' /> : <VolumeX className='h-3.5 w-3.5' />}
+                    />
+                    <Popover
+                        side='top'
+                        align='start'
+                        trigger={(open, toggle) => (
+                            <ToggleChip
+                                active={!!microphone}
+                                pressed={open}
+                                onClick={toggle}
+                                label='Microphone'
+                                status={microphone ? microphone.name : 'Off'}
+                                icon={microphone ? <Mic className='h-3.5 w-3.5' /> : <MicOff className='h-3.5 w-3.5' />}
+                            />
                         )}
-                    </p>
-                    <Button
-                        variant='record'
-                        className='w-48'
-                        onClick={startRecording}
-                        disabled={!screenGranted || busy || !ready}
-                        title={notReady ?? `Record ${sourceLabel} (⌘⇧R from any app)`}
                     >
-                        <span className='relative flex h-3 w-3'>
-                            {!notReady && <span className='absolute inset-0 animate-ping rounded-full bg-white/60' />}
-                            <span className='relative h-3 w-3 rounded-full bg-white' />
-                        </span>
-                        Start recording
-                    </Button>
-                </div>
+                        {(close) => (
+                            <div className='w-64 space-y-1'>
+                                <MenuHeading>Microphone</MenuHeading>
+                                <MenuItem selected={!settings.microphoneId} onClick={() => (selectMicrophone(''), close())}>
+                                    No microphone
+                                </MenuItem>
+                                {microphones.map((mic) => (
+                                    <MenuItem key={mic.id} selected={mic.id === settings.microphoneId} onClick={() => (selectMicrophone(mic.id), close())}>
+                                        {mic.name}
+                                    </MenuItem>
+                                ))}
+                                {settings.microphoneId && (
+                                    <div className='mt-2 space-y-1 border-t border-line px-2 pt-3'>
+                                        <div className='flex items-center justify-between text-xs'>
+                                            <span>Echo cancellation</span>
+                                            <Switch label='Echo cancellation' checked={settings.echoCancellation} onChange={(echoCancellation) => update({ echoCancellation })} />
+                                        </div>
+                                        <p className='text-[11px] text-muted'>Keeps speaker sound out of your mic. Turn off with headphones for the most natural voice.</p>
+                                    </div>
+                                )}
+                            </div>
+                        )}
+                    </Popover>
+                    <Popover
+                        side='top'
+                        align='start'
+                        trigger={(open, toggle) => (
+                            <ToggleChip
+                                active={cameraVisible && !!camera}
+                                pressed={open}
+                                onClick={toggle}
+                                label='Camera'
+                                status={cameraVisible && camera ? camera.name : 'Off'}
+                                icon={cameraVisible && camera ? <Camera className='h-3.5 w-3.5' /> : <CameraOff className='h-3.5 w-3.5' />}
+                            />
+                        )}
+                    >
+                        {(close) => (
+                            <div className='w-64 space-y-1'>
+                                <MenuHeading>Camera</MenuHeading>
+                                <MenuItem selected={!cameraVisible} onClick={() => (selectCamera(''), close())}>
+                                    No camera
+                                </MenuItem>
+                                {cameras.map((cam) => (
+                                    <MenuItem key={cam.id} selected={cameraVisible && cam.id === settings.cameraId} onClick={() => (selectCamera(cam.id), close())}>
+                                        {cam.name}
+                                    </MenuItem>
+                                ))}
+                                {cameraVisible && <p className='px-2 pt-2 text-[11px] text-muted'>Drag the bubble anywhere. It's recorded separately, so you can move or hide it later.</p>}
+                            </div>
+                        )}
+                    </Popover>
+                <p className={cx('ml-2 min-w-0 flex-1 truncate text-xs', notReady ? 'text-warning-fg' : 'text-muted')}>
+                    {notReady ?? (
+                        <>
+                            Records <span className='font-medium text-fg'>{sourceLabel}</span>
+                        </>
+                    )}
+                </p>
+                <Button
+                    variant='record'
+                    className='w-44 shrink-0'
+                    onClick={startRecording}
+                    disabled={!screenGranted || busy || !ready}
+                    title={notReady ?? `Record ${sourceLabel} (⌘⇧R from any app)`}
+                >
+                    <span className='relative flex h-3 w-3'>
+                        {!notReady && <span className='absolute inset-0 animate-ping rounded-full bg-white/60' />}
+                        <span className='relative h-3 w-3 rounded-full bg-white' />
+                    </span>
+                    Record
+                </Button>
             </div>
         </section>
     );
@@ -543,16 +530,13 @@ function ToggleChip({ active, pressed, onClick, label, status, icon }: { active:
             aria-label={`${label}: ${status}`}
             aria-pressed={active}
             className={cx(
-                'flex w-full min-w-0 flex-col items-start gap-0.5 rounded-xl border px-3 py-2 text-left transition-colors',
-                active ? 'border-accent/40 bg-accent/10' : 'border-line bg-panel hover:border-line-strong',
+                'flex h-9 max-w-[180px] min-w-0 items-center gap-2 rounded-full border px-3 text-xs transition-colors',
+                active ? 'border-accent/40 bg-accent/10 text-accent' : 'border-line bg-panel text-muted hover:border-line-strong hover:text-fg',
                 pressed && 'ring-2 ring-accent/30'
             )}
         >
-            <span className={cx('flex items-center gap-1.5 whitespace-nowrap text-xs font-medium', active ? 'text-accent' : 'text-muted')}>
-                {icon}
-                {label}
-            </span>
-            <span className='w-full truncate text-[11px] text-subtle'>{status}</span>
+            {icon}
+            <span className='truncate font-medium'>{active ? status : label}</span>
         </button>
     );
 }

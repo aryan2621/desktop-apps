@@ -1,19 +1,21 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { revealItemInDir } from '@tauri-apps/plugin-opener';
-import { ArrowLeft, Check, CircleAlert, Download, EyeOff, FastForward, FolderOpen, Gauge, Keyboard, Loader2, Minus, Pause, Play, Plus, Redo2, Rewind, Scissors, Trash2, Type, Undo2, X, ZoomIn } from 'lucide-react';
+import { ArrowLeft, Check, CircleAlert, Crop, Download, FastForward, FolderOpen, Gauge, Keyboard, Loader2, Minus, Pause, Play, Plus, Redo2, Rewind, RotateCcw, Scissors, SquareSplitHorizontal, Trash2, Undo2, X } from 'lucide-react';
 import { toast } from 'sonner';
 import { api, errorMessage, fileUrl, formatDuration, type CursorData, type Project } from '../lib/api';
-import { Button, IconButton, Popover, RangeInput, cx } from '../components/ui';
+import { Button, IconButton, Popover, RangeInput, Select, cx } from '../components/ui';
 import { CropOverlay } from '../editor/CropOverlay';
 import { ExportDialog } from '../editor/ExportDialog';
 import { ShortcutsSheet } from '../editor/ShortcutsSheet';
 import { Inspector } from '../editor/Inspector';
 import { TextHandle } from '../editor/TextHandle';
 import { HideHandle } from '../editor/HideHandle';
+import { ZoomFocusHandle } from '../editor/ZoomFocusHandle';
 import { MAX_TIMELINE_ZOOM, MIN_TIMELINE_ZOOM, Timeline, type TimelineHandle } from '../editor/Timeline';
 import { combinePeaks, computePeaks } from '../editor/waveform';
 import { gainOf } from '../editor/audioSchedule';
 import {
+    ASPECTS,
     aspectRatio,
     autoZooms,
     defaultEdit,
@@ -25,6 +27,7 @@ import {
     positionAt,
     removeClip,
     removeRange,
+    splitAt,
     TEXT_FADE,
     textAmount,
     timedSegments,
@@ -44,6 +47,7 @@ import { useThumbnails } from '../editor/useThumbnails';
 
 const SAVE_DELAY_MS = 400;
 const SPEED_PRESETS = [0.5, 1, 1.5, 2, 3, 4];
+const ASPECT_HINTS: Record<string, string> = { '16:9': '· Wide', '9:16': '· Vertical', '1:1': '· Square', '4:5': '· Portrait' };
 /** Canvas resolution is capped so drawing stays fast on big screens. */
 const MAX_PIXEL_RATIO = 2;
 
@@ -68,6 +72,13 @@ export function EditorView({ project, onClose }: { project: Project; onClose: ()
     /** Output-time range marked for cutting (the two red markers), or null. */
     const [cutRange, setCutRange] = useState<[number, number] | null>(null);
     const [time, setTime] = useState(0);
+    /**
+     * The editor plays a 1080p copy of the screen video once it's made: full-size Retina
+     * recordings of busy content can be too heavy to decode in real time here, which freezes the
+     * preview. Exports always use the original.
+     */
+    const [previewFile, setPreviewFile] = useState<string | null>(null);
+    const [makingPreview, setMakingPreview] = useState(false);
     const [stage, setStage] = useState({ width: 0, height: 0 });
 
     const clickTimes = useMemo(() => cursor?.clicks.map(([t]) => t) ?? [], [cursor]);
@@ -113,6 +124,8 @@ export function EditorView({ project, onClose }: { project: Project; onClose: ()
     editRef.current = edit;
     const croppingRef = useRef(cropping);
     croppingRef.current = cropping;
+    /** While a fixed-point zoom is selected and paused, the preview shows the whole screen so its focus can be placed. */
+    const placingFocusRef = useRef(false);
 
     // Load edit.json and the cursor track.
     useEffect(() => {
@@ -134,6 +147,37 @@ export function EditorView({ project, onClose }: { project: Project; onClose: ()
         };
         // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [project]);
+
+    useEffect(() => {
+        let cancelled = false;
+        const slow = setTimeout(() => !cancelled && setMakingPreview(true), 400);
+        api.makePreview(project.id)
+            .then((file) => !cancelled && setPreviewFile(file))
+            .catch((error) => api.log(`[editor ${project.id}] preview copy failed, playing the original: ${error}`))
+            .finally(() => {
+                clearTimeout(slow);
+                if (!cancelled) setMakingPreview(false);
+            });
+        return () => {
+            cancelled = true;
+            clearTimeout(slow);
+        };
+    }, [project.id]);
+    // When the video switches to the preview copy, put it back where playback is.
+    const onScreenLoaded = () => {
+        if (previewFile) playbackRef.current.seek(playbackRef.current.now());
+    };
+
+    // Once: the editing keys changed (S used to mark a cut).
+    useEffect(() => {
+        try {
+            if (localStorage.getItem('capturita.tip.keys')) return;
+            localStorage.setItem('capturita.tip.keys', '1');
+        } catch {
+            return;
+        }
+        toast.info('New editing keys', { description: 'S splits a clip, C marks a part to cut, Z adds a zoom. Press ? for all shortcuts.', duration: 8000 });
+    }, []);
 
     // A new recording starts with zooms around its clicks, like Screen Studio.
     useEffect(() => {
@@ -189,8 +233,38 @@ export function EditorView({ project, onClose }: { project: Project; onClose: ()
     const lastTimeUpdate = useRef(0);
     useEffect(() => {
         let frame = 0;
+        let previous = performance.now();
+        let lastSlowLog = 0;
+        // Diagnostics: when the screen video stops advancing while playing.
+        let lastVideoTime = -1;
+        let videoStuckSince = 0;
+        let stuckLogged = false;
         const loop = () => {
             const playback = playbackRef.current;
+            // Development builds note stutters while playing, so a slow preview can be diagnosed from the app's log.
+            const started = performance.now();
+            const gap = started - previous;
+            previous = started;
+            if (import.meta.env.DEV && playback.playing && gap > 80 && started - lastSlowLog > 1000) {
+                lastSlowLog = started;
+                const video = playback.screenRef.current;
+                api.log(`[preview] slow frame ${Math.round(gap)} ms at ${playback.now().toFixed(2)} s (video ${video?.currentTime.toFixed(2)}, seeking ${video?.seeking}, ready ${video?.readyState})`);
+            }
+            const screenVideo = playback.screenRef.current;
+            if (import.meta.env.DEV && playback.playing && screenVideo) {
+                if (screenVideo.currentTime !== lastVideoTime) {
+                    if (stuckLogged) api.log(`[preview] video moving again at ${screenVideo.currentTime.toFixed(2)} after ${Math.round(started - videoStuckSince)} ms`);
+                    lastVideoTime = screenVideo.currentTime;
+                    videoStuckSince = started;
+                    stuckLogged = false;
+                } else if (!stuckLogged && started - videoStuckSince > 150) {
+                    stuckLogged = true;
+                    const buffered = Array.from({ length: screenVideo.buffered.length }, (_, i) => `${screenVideo.buffered.start(i).toFixed(1)}-${screenVideo.buffered.end(i).toFixed(1)}`).join(',');
+                    api.log(
+                        `[preview] video stuck at ${screenVideo.currentTime.toFixed(2)} (clock ${playback.now().toFixed(2)}, paused ${screenVideo.paused}, seeking ${screenVideo.seeking}, ready ${screenVideo.readyState}, network ${screenVideo.networkState}, buffered ${buffered}, rate ${screenVideo.playbackRate})`
+                    );
+                }
+            }
             const t = playback.tick();
             timelineRef.current?.setPlayhead(t);
             const now = performance.now();
@@ -203,6 +277,13 @@ export function EditorView({ project, onClose }: { project: Project; onClose: ()
             if (canvas && ctx) {
                 const current = editRef.current;
                 const position = positionAt(current.clips, t);
+                // While playing, draw the zoom and cursor for the frame the video is actually
+                // showing (it can trail the audio clock slightly), so they never drift apart.
+                const video = playback.screenRef.current;
+                if (playback.playing && video && !video.seeking && video.readyState >= 2) {
+                    const shown = video.currentTime + project.tracks.screen.offset;
+                    if (shown >= position.clip.start && shown <= position.clip.end && Math.abs(shown - position.source) < 0.25) position.source = shown;
+                }
                 const camera = project.tracks.camera;
                 const cameraLocal = camera ? position.source - camera.offset : -1;
                 drawFrame(ctx, canvas.width, canvas.height, {
@@ -214,6 +295,8 @@ export function EditorView({ project, onClose }: { project: Project; onClose: ()
                     cursor,
                     time: position.source,
                     ignoreCrop: croppingRef.current,
+                    noZoom: placingFocusRef.current && !playback.playing,
+                    preview: true,
                 });
             }
             frame = requestAnimationFrame(loop);
@@ -224,6 +307,41 @@ export function EditorView({ project, onClose }: { project: Project; onClose: ()
 
     const setClips = useCallback((clips: Clip[], key?: string) => history.set((e) => ({ ...e, clips }), key), [history]);
     const change = useCallback((partial: Partial<Edit>, key: string) => history.set((e) => ({ ...e, ...partial }), key), [history]);
+
+    /** Saves a picture as the recording's thumbnail (thumb.jpg), as a JPEG at most 1280 px wide. */
+    const saveThumbnail = async (source: CanvasImageSource, width: number, height: number) => {
+        const scale = Math.min(1, 1280 / width);
+        const canvas = document.createElement('canvas');
+        canvas.width = Math.round(width * scale);
+        canvas.height = Math.round(height * scale);
+        const ctx = canvas.getContext('2d');
+        if (!ctx) return;
+        ctx.imageSmoothingQuality = 'high';
+        ctx.drawImage(source, 0, 0, canvas.width, canvas.height);
+        const blob = await new Promise<Blob | null>((resolve) => canvas.toBlob(resolve, 'image/jpeg', 0.88));
+        if (!blob) return;
+        try {
+            await api.saveThumbnail(project.id, blob);
+            change({ thumbnail: Date.now() }, 'thumbnail');
+            toast.success('Thumbnail set');
+        } catch (error) {
+            toast.error(errorMessage(error));
+        }
+    };
+    /** The frame on the preview, as it looks in the video (background, zoom and all). */
+    const thumbnailFromFrame = () => {
+        const canvas = canvasRef.current;
+        if (canvas) saveThumbnail(canvas, canvas.width, canvas.height);
+    };
+    const thumbnailFromFile = async (file: File) => {
+        try {
+            const image = await createImageBitmap(file);
+            await saveThumbnail(image, image.width, image.height);
+            image.close();
+        } catch {
+            toast.error('Choose an image (PNG, JPEG, WebP or HEIC)');
+        }
+    };
 
     const togglePlay = () => (playback.playing ? playback.pause() : playback.play(playback.now()));
 
@@ -251,6 +369,16 @@ export function EditorView({ project, onClose }: { project: Project; onClose: ()
         playback.seek(Math.min(...cutRange));
     };
     const cancelCut = () => setCutRange(null);
+    /** Splits the clip under the playhead in two, so each part can get its own speed or be removed. */
+    const split = () => {
+        const result = splitAt(edit.clips, playback.now());
+        if (!result) {
+            toast.info('Move the playhead away from the clip edges to split it.');
+            return;
+        }
+        setClips(result.clips);
+        select('clip', result.selected);
+    };
 
     const selected = edit.clips.find((clip) => clip.id === selectedId) ?? null;
     const selectedZoom = edit.zooms.find((zoom) => zoom.id === selectedZoomId) ?? null;
@@ -340,14 +468,21 @@ export function EditorView({ project, onClose }: { project: Project; onClose: ()
         setZooms(edit.zooms.filter((zoom) => zoom.id !== id));
         setSelectedZoomId(null);
     };
-    /** Adds a 3-second zoom starting at the playhead (inside the current clip). */
-    const addZoom = () => {
-        const { clip, source } = positionAt(edit.clips, playback.now());
+    /** Adds a 3-second zoom at the playhead, or at an output time (inside that clip). */
+    const addZoom = (at?: number) => {
+        const { clip, source } = positionAt(edit.clips, at ?? playback.now());
         let start = source;
         let end = Math.min(clip.end, start + 3);
         if (end - start < MIN_ZOOM) start = Math.max(clip.start, end - 3);
         if (end - start < MIN_ZOOM) {
             toast.info('This clip is too short to zoom.');
+            return;
+        }
+        // Don't run into the next zoom.
+        const next = edit.zooms.filter((z) => z.start >= start).reduce((min, z) => Math.min(min, z.start), Infinity);
+        end = Math.min(end, next);
+        if (end - start < MIN_ZOOM || edit.zooms.some((z) => start >= z.start && start < z.end)) {
+            toast.info('There is already a zoom here.');
             return;
         }
         const zoom: Zoom = { id: newId(), start, end, scale: edit.zoomScale, mode: 'follow', x: 0.5, y: 0.5, auto: false };
@@ -405,7 +540,10 @@ export function EditorView({ project, onClose }: { project: Project; onClose: ()
     const actions = {
         togglePlay,
         cut,
+        split,
+        addZoom,
         cancelCut,
+        deselect: () => select('clip', null),
         deleteSelected,
         addText,
         addHide,
@@ -440,7 +578,11 @@ export function EditorView({ project, onClose }: { project: Project; onClose: ()
                 event.preventDefault();
                 actions.togglePlay();
             } else if (!event.metaKey && event.key.toLowerCase() === 's') {
+                actions.split();
+            } else if (!event.metaKey && event.key.toLowerCase() === 'c') {
                 actions.cut();
+            } else if (!event.metaKey && event.key.toLowerCase() === 'z') {
+                actions.addZoom();
             } else if (!event.metaKey && event.key.toLowerCase() === 't') {
                 actions.addText();
             } else if (!event.metaKey && event.key.toLowerCase() === 'h') {
@@ -453,6 +595,7 @@ export function EditorView({ project, onClose }: { project: Project; onClose: ()
                 actions.shortcuts();
             } else if (event.key === 'Escape') {
                 actions.cancelCut();
+                actions.deselect();
             } else if (event.key === 'Backspace' || event.key === 'Delete') {
                 actions.deleteSelected();
             }
@@ -470,6 +613,9 @@ export function EditorView({ project, onClose }: { project: Project; onClose: ()
     const pixelRatio = Math.min(window.devicePixelRatio || 1, MAX_PIXEL_RATIO);
     const cropFrame = cropping ? layoutFrame(edit, project, frameWidth, frameHeight, true) : null;
     const sourceTime = positionAt(edit.clips, time).source;
+    const cropped = edit.crop.x > 0 || edit.crop.y > 0 || edit.crop.width < 1 || edit.crop.height < 1;
+    const placingFocus = !cropping && !playback.playing && selectedZoom?.mode === 'fixed';
+    placingFocusRef.current = placingFocus;
     const exportName = `${project.source.name} ${new Date(project.createdAt).toISOString().slice(0, 16).replace('T', ' ').replace(':', '.')}`;
 
     return (
@@ -483,7 +629,30 @@ export function EditorView({ project, onClose }: { project: Project; onClose: ()
                     <p className='text-xs text-muted'>{new Date(project.createdAt).toLocaleString()}</p>
                 </div>
                 <SaveStatus state={saveState} />
-                <div className='ml-auto flex items-center gap-1'>
+                <div className='mx-auto flex items-center gap-1.5'>
+                    <Select
+                        className='h-8 w-36 text-xs'
+                        value={edit.aspect}
+                        onChange={(e) => change({ aspect: e.target.value as Edit['aspect'] }, 'aspect')}
+                        title='Shape of the video'
+                        aria-label='Aspect ratio'
+                    >
+                        {ASPECTS.map((a) => (
+                            <option key={a.value} value={a.value}>
+                                {a.value === 'auto' ? 'Original shape' : `${a.label} ${ASPECT_HINTS[a.value] ?? ''}`}
+                            </option>
+                        ))}
+                    </Select>
+                    <Button size='sm' variant={cropping ? 'primary' : 'ghost'} onClick={() => setCropping((c) => !c)} title={cropping ? 'Finish cropping' : 'Crop the screen'}>
+                        {cropping ? <Check className='h-4 w-4' /> : <Crop className='h-4 w-4' />} {cropping ? 'Done' : 'Crop'}
+                    </Button>
+                    {cropped && !cropping && (
+                        <IconButton label='Reset crop' size='icon-sm' onClick={() => change({ crop: { x: 0, y: 0, width: 1, height: 1 } }, 'crop-reset')}>
+                            <RotateCcw className='h-3.5 w-3.5' />
+                        </IconButton>
+                    )}
+                </div>
+                <div className='flex items-center gap-1'>
                     <IconButton label='Undo (⌘Z)' onClick={history.undo} disabled={!history.canUndo}>
                         <Undo2 className='h-4 w-4' />
                     </IconButton>
@@ -522,6 +691,13 @@ export function EditorView({ project, onClose }: { project: Project; onClose: ()
                                     onChange={(rect) => setHides(edit.hides.map((h) => (h.id === selectedHide.id ? { ...h, ...rect } : h)), `hide-move-${selectedHide.id}`)}
                                 />
                             )}
+                            {placingFocus && selectedZoom && (
+                                <ZoomFocusHandle
+                                    zoom={selectedZoom}
+                                    frame={layoutFrame(edit, project, frameWidth, frameHeight)}
+                                    onMove={(x, y) => setZooms(edit.zooms.map((z) => (z.id === selectedZoom.id ? { ...z, x, y, auto: false } : z)), `zoom-focus-${selectedZoom.id}`)}
+                                />
+                            )}
                             {!cropping && selectedText && textAmount(selectedText, sourceTime) > 0 && (
                                 <TextHandle
                                     text={selectedText}
@@ -531,6 +707,16 @@ export function EditorView({ project, onClose }: { project: Project; onClose: ()
                                 />
                             )}
                         </div>
+                        {placingFocus && (
+                            <div className='absolute left-1/2 top-3 flex -translate-x-1/2 items-center gap-2 rounded-full bg-panel/90 px-3 py-1.5 text-xs text-muted shadow'>
+                                Placing the zoom — drag the box, press Play to see it zoomed
+                            </div>
+                        )}
+                        {makingPreview && (
+                            <div className='absolute left-1/2 top-3 flex -translate-x-1/2 items-center gap-2 rounded-full bg-panel/90 px-3 py-1.5 text-xs text-muted shadow'>
+                                <Loader2 className='h-3.5 w-3.5 animate-spin' /> Preparing a smooth preview…
+                            </div>
+                        )}
                         {!playback.ready && (
                             <div className='absolute inset-0 flex items-center justify-center'>
                                 <Loader2 className='h-6 w-6 animate-spin text-muted' />
@@ -541,8 +727,11 @@ export function EditorView({ project, onClose }: { project: Project; onClose: ()
                     <div className='shrink-0 space-y-2 border-t border-line bg-panel px-4 pb-4 pt-2'>
                         <div className='grid grid-cols-[1fr_auto_1fr] items-center gap-4'>
                             <div className='flex items-center gap-1'>
+                                <IconButton label='Split the clip at the playhead (S)' onClick={split}>
+                                    <SquareSplitHorizontal className='h-4 w-4' />
+                                </IconButton>
                                 <IconButton
-                                    label={cutRange ? 'Cut out the marked part (S)' : 'Mark a part to cut (S)'}
+                                    label={cutRange ? 'Cut out the marked part (C)' : 'Mark a part to cut (C)'}
                                     variant={cutRange ? 'danger' : 'ghost'}
                                     onClick={cut}
                                 >
@@ -553,15 +742,6 @@ export function EditorView({ project, onClose }: { project: Project; onClose: ()
                                         <X className='h-4 w-4' />
                                     </IconButton>
                                 )}
-                                <IconButton label='Add a zoom at the playhead' onClick={addZoom}>
-                                    <ZoomIn className='h-4 w-4' />
-                                </IconButton>
-                                <IconButton label='Add text at the playhead (T)' onClick={addText}>
-                                    <Type className='h-4 w-4' />
-                                </IconButton>
-                                <IconButton label='Hide part of the screen at the playhead (H)' onClick={addHide}>
-                                    <EyeOff className='h-4 w-4' />
-                                </IconButton>
                                 <span className='mx-1 h-5 w-px bg-line' aria-hidden />
                                 <IconButton
                                     label={
@@ -700,22 +880,28 @@ export function EditorView({ project, onClose }: { project: Project; onClose: ()
                             selectedCaptionId={selectedCaptionId}
                             onSelectCaption={selectCaption}
                             onCaptionsChange={setCaptionItems}
+                            onAddZoomAt={(t) => {
+                                addZoom(t);
+                                playback.seek(t);
+                            }}
                         />
                     </div>
                 </div>
 
-                <aside className='w-[352px] shrink-0 border-l border-line bg-panel'>
+                <aside className='w-[340px] shrink-0 border-l border-line bg-panel'>
                     <Inspector
                         edit={edit}
                         hasCamera={!!project.tracks.camera}
-                        cropping={cropping}
                         onChange={change}
-                        onCropToggle={() => setCropping((c) => !c)}
                         selectedZoom={selectedZoom}
                         hasClicks={(cursor?.clicks.length ?? 0) > 0}
                         onZoomChange={(zoom, key) => setZooms(edit.zooms.map((z) => (z.id === zoom.id ? zoom : z)), key)}
                         onZoomDelete={deleteZoom}
                         onAutoZoom={runAutoZoom}
+                        onAddZoom={() => addZoom()}
+                        onThumbnailFromFrame={thumbnailFromFrame}
+                        onThumbnailFromFile={thumbnailFromFile}
+                        onDeselect={() => select('clip', null)}
                         onApplyZoomScaleToAll={applyZoomScaleToAll}
                         selectedText={selectedText}
                         onAddText={addText}
@@ -745,7 +931,7 @@ export function EditorView({ project, onClose }: { project: Project; onClose: ()
 
             {/* Frame sources for the canvas. Kept in the page (not display:none) so WebKit keeps decoding them. */}
             <div className='pointer-events-none fixed left-0 top-0 h-px w-px overflow-hidden opacity-0' aria-hidden>
-                <video ref={playback.screenRef} src={fileUrl(project, project.tracks.screen.file)} muted playsInline preload='auto' />
+                <video ref={playback.screenRef} src={fileUrl(project, previewFile ?? project.tracks.screen.file)} onLoadedData={onScreenLoaded} muted playsInline preload='auto' />
                 {project.tracks.camera && <video ref={playback.cameraRef} src={fileUrl(project, project.tracks.camera.file)} muted playsInline preload='auto' />}
             </div>
         </div>

@@ -1,4 +1,5 @@
 import AppKit
+import CoreMedia
 
 /// Records the cursor separately from the video (the capture itself hides the cursor),
 /// so the editor can draw a smooth cursor, highlight clicks and zoom in on them.
@@ -12,6 +13,7 @@ final class CursorTracker {
     private var moves: [[Double]] = []
     private var clicks: [[Any]] = []
     private var lastPoint: CGPoint?
+    private var lastTime: Double = -1
 
     init(clock: RecordingClock, area: CGRect) {
         self.clock = clock
@@ -19,20 +21,37 @@ final class CursorTracker {
     }
 
     func start() {
-        let timer = Timer(timeInterval: 1.0 / 60.0, repeats: true) { [weak self] _ in self?.sample() }
+        // Mouse events give exact timing for every movement; the timer is a fallback for
+        // anything they miss (e.g. the cursor moved by another app).
+        let timer = Timer(timeInterval: 1.0 / 120.0, repeats: true) { [weak self] _ in self?.sample(at: RecordingClock.now()) }
         RunLoop.main.add(timer, forMode: .common)
         self.timer = timer
 
-        let mask: NSEvent.EventTypeMask = [.leftMouseDown, .rightMouseDown]
-        if let global = NSEvent.addGlobalMonitorForEvents(matching: mask, handler: { [weak self] event in self?.click(event) }) {
+        let mask: NSEvent.EventTypeMask = [.leftMouseDown, .rightMouseDown, .mouseMoved, .leftMouseDragged, .rightMouseDragged]
+        if let global = NSEvent.addGlobalMonitorForEvents(matching: mask, handler: { [weak self] event in self?.handle(event) }) {
             monitors.append(global)
         }
         if let local = NSEvent.addLocalMonitorForEvents(matching: mask, handler: { [weak self] event in
-            self?.click(event)
+            self?.handle(event)
             return event
         }) {
             monitors.append(local)
         }
+    }
+
+    private func handle(_ event: NSEvent) {
+        let time = hostTime(of: event)
+        switch event.type {
+        case .leftMouseDown, .rightMouseDown: click(event, at: time)
+        default: sample(at: time)
+        }
+    }
+
+    /// When the event happened, on the recording clock. Event timestamps count from system
+    /// start-up like `systemUptime`, so their age is the difference.
+    private func hostTime(of event: NSEvent) -> CMTime {
+        let age = max(0, ProcessInfo.processInfo.systemUptime - event.timestamp)
+        return RecordingClock.now() - CMTime(seconds: age, preferredTimescale: 1_000_000_000)
     }
 
     func stop() {
@@ -52,18 +71,24 @@ final class CursorTracker {
         try JSONSerialization.data(withJSONObject: json).write(to: url)
     }
 
-    private func sample() {
-        guard let time = clock.elapsed() else { return }
+    private func sample(at hostTime: CMTime) {
+        guard let time = clock.elapsed(at: hostTime), time > lastTime else { return }
         let point = currentPoint()
         if point == lastPoint { return }
+        // After a pause, mark where the cursor rested until just before it moved again, so the
+        // editor doesn't glide across the whole pause.
+        if let rest = lastPoint, time - lastTime > 2.0 / 60.0 {
+            moves.append([round(time - 1.0 / 120.0, 3), round(rest.x, 5), round(rest.y, 5)])
+        }
         lastPoint = point
-        moves.append([round3(time), round4(point.x), round4(point.y)])
+        lastTime = time
+        moves.append([round(time, 3), round(point.x, 5), round(point.y, 5)])
     }
 
-    private func click(_ event: NSEvent) {
-        guard let time = clock.elapsed() else { return }
+    private func click(_ event: NSEvent, at hostTime: CMTime) {
+        guard let time = clock.elapsed(at: hostTime) else { return }
         let point = currentPoint()
-        clicks.append([round3(time), round4(point.x), round4(point.y), event.type == .rightMouseDown ? "right" : "left"])
+        clicks.append([round(time, 3), round(point.x, 5), round(point.y, 5), event.type == .rightMouseDown ? "right" : "left"])
     }
 
     private func currentPoint() -> CGPoint {
@@ -74,6 +99,8 @@ final class CursorTracker {
         return CGPoint(x: (global.x - area.minX) / area.width, y: (global.y - area.minY) / area.height)
     }
 
-    private func round3(_ value: Double) -> Double { (value * 1000).rounded() / 1000 }
-    private func round4(_ value: Double) -> Double { (value * 10000).rounded() / 10000 }
+    private func round(_ value: Double, _ digits: Int) -> Double {
+        let scale = pow(10.0, Double(digits))
+        return (value * scale).rounded() / scale
+    }
 }

@@ -92,6 +92,18 @@ final class Controller {
             bar.set(.saving)
             defer { bar.hide() }
             return try await recorder.stop()
+        case "trash":
+            // Moves a recording's folder to the Trash, so a delete can be undone from Finder.
+            guard let path = args.string("path") else { throw RecorderError("Missing folder") }
+            try FileManager.default.trashItem(at: URL(fileURLWithPath: path), resultingItemURL: nil)
+            return NSNull()
+        case "makePreview":
+            guard let dir = args.string("dir") else { throw RecorderError("Missing project folder") }
+            // Never alongside a recording: both would use the video encoder, and the recording could drop frames.
+            while recorder.isRecording {
+                try await Task.sleep(for: .seconds(2))
+            }
+            return try await PreviewMaker.make(projectDir: URL(fileURLWithPath: dir))
         case "cancel":
             bar.hide()
             await recorder.cancel()

@@ -1,9 +1,9 @@
-import { useState, type ReactNode } from 'react';
+import { useEffect, useState } from 'react';
 import { revealItemInDir } from '@tauri-apps/plugin-opener';
-import { AppWindow, Camera, Clock, Crop, Film, FolderOpen, Mic, Monitor, MousePointerClick, Pencil, Plus, Sparkles, Trash2, Volume2 } from 'lucide-react';
+import { AppWindow, Camera, Crop, Film, FolderOpen, Mic, Monitor, MousePointerClick, Plus, Sparkles, Trash2, Volume2 } from 'lucide-react';
 import { toast } from 'sonner';
 import { api, errorMessage, fileUrl, formatDuration, type Project } from '../lib/api';
-import { Button, Kbd, cx } from './ui';
+import { Button, IconButton, Kbd, cx } from './ui';
 
 const relative = new Intl.RelativeTimeFormat(undefined, { numeric: 'auto' });
 
@@ -26,42 +26,12 @@ function whenRecorded(iso: string) {
 
 const SOURCE_ICONS = { display: Monitor, window: AppWindow, area: Crop };
 
-/** "Good morning" … by the time of day. */
-function greeting() {
-    const hour = new Date().getHours();
-    return hour < 5 ? 'Working late' : hour < 12 ? 'Good morning' : hour < 17 ? 'Good afternoon' : 'Good evening';
-}
-
-/** Total length in words: "45 sec", "12 min", "1 h 5 min". */
-function totalLength(seconds: number) {
-    if (seconds < 60) return `${Math.round(seconds)} sec`;
-    const minutes = Math.round(seconds / 60);
-    return minutes < 60 ? `${minutes} min` : `${Math.floor(minutes / 60)} h ${minutes % 60} min`;
-}
-
-/** The library's heading: a greeting, and how much is in it. */
+/** The library's heading. */
 export function LibraryHeader({ recordings }: { recordings: Project[] }) {
-    const seconds = recordings.reduce((sum, project) => sum + project.duration, 0);
     return (
-        <div className='flex flex-wrap items-end justify-between gap-3'>
-            <div>
-                <p className='text-sm text-subtle'>{greeting()}</p>
-                <h2 className='font-serif text-3xl font-medium tracking-tight'>
-                    {recordings.length ? 'Your recordings' : "Let's make your first one"}
-                </h2>
-            </div>
-            {recordings.length > 0 && (
-                <div className='flex gap-2'>
-                    <span className='inline-flex items-center gap-1.5 rounded-full bg-panel-2 px-3 py-1 text-xs text-muted'>
-                        <Film className='h-3.5 w-3.5' />
-                        {recordings.length} {recordings.length === 1 ? 'recording' : 'recordings'}
-                    </span>
-                    <span className='inline-flex items-center gap-1.5 rounded-full bg-panel-2 px-3 py-1 text-xs text-muted'>
-                        <Clock className='h-3.5 w-3.5' />
-                        {totalLength(seconds)}
-                    </span>
-                </div>
-            )}
+        <div className='flex items-baseline gap-3'>
+            <h2 className='font-serif text-2xl font-medium tracking-tight'>{recordings.length ? 'Recordings' : "Let's make your first one"}</h2>
+            {recordings.length > 0 && <span className='text-sm text-subtle'>{recordings.length}</span>}
         </div>
     );
 }
@@ -126,44 +96,26 @@ export function EmptyLibrary({ onNew }: { onNew: () => void }) {
     );
 }
 
-/** The recordings, as cards or a table. A click selects one (details on the right); a double-click opens it. */
-export function RecordingsList({
-    recordings,
-    view,
-    selectedId,
-    onSelect,
-    onOpen,
-}: {
-    recordings: Project[];
-    view: LibraryView;
-    selectedId: string | null;
-    onSelect: (project: Project) => void;
-    onOpen: (project: Project) => void;
-}) {
+/** The recordings, as cards or a table. A click opens one in the editor; more actions are in its menu. */
+export function RecordingsList({ recordings, view, onOpen, onDeleted }: { recordings: Project[]; view: LibraryView; onOpen: (project: Project) => void; onDeleted: () => void }) {
     if (view === 'table') {
         return (
-            <div className='overflow-hidden rounded-xl border border-line bg-panel'>
+            <div className='rounded-xl border border-line bg-panel'>
                 <table className='w-full table-fixed text-sm'>
-                    <thead className='border-b border-line bg-panel-2 text-left text-[11px] font-semibold uppercase tracking-wider text-subtle'>
+                    <thead className='border-b border-line bg-panel-2 text-left text-[11px] font-semibold uppercase tracking-wider text-subtle [&_th:first-child]:rounded-tl-xl [&_th:last-child]:rounded-tr-xl'>
                         <tr>
                             <th className='w-[46%] px-3 py-2 font-semibold'>Recording</th>
                             <th className='px-3 py-2 font-semibold'>Recorded</th>
                             <th className='w-20 px-3 py-2 font-semibold'>Length</th>
                             <th className='w-24 px-3 py-2 font-semibold'>Tracks</th>
+                            <th className='w-20 px-3 py-2' />
                         </tr>
                     </thead>
                     <tbody>
                         {recordings.map((project) => {
                             const SourceIcon = SOURCE_ICONS[project.source.type] ?? Monitor;
-                            const selected = project.id === selectedId;
                             return (
-                                <tr
-                                    key={project.id}
-                                    onClick={() => onSelect(project)}
-                                    onDoubleClick={() => onOpen(project)}
-                                    className={cx('cursor-default border-b border-line last:border-0', selected ? 'bg-accent/10' : 'hover:bg-panel-2')}
-                                    title='Double-click to open in the editor'
-                                >
+                                <tr key={project.id} onClick={() => onOpen(project)} className='group cursor-default border-b border-line last:border-0 hover:bg-panel-2' title='Open in the editor'>
                                     <td className='px-3 py-2'>
                                         <span className='flex min-w-0 items-center gap-3'>
                                             <span className='relative block aspect-video w-16 shrink-0 overflow-hidden rounded-md bg-stage'>
@@ -179,6 +131,9 @@ export function RecordingsList({
                                     <td className='px-3 py-2 font-mono text-xs text-muted'>{formatDuration(project.duration)}</td>
                                     <td className='px-3 py-2'>
                                         <TrackIcons project={project} />
+                                    </td>
+                                    <td className='px-2 py-2' onClick={(e) => e.stopPropagation()}>
+                                        <RecordingMenu project={project} onDeleted={onDeleted} />
                                     </td>
                                 </tr>
                             );
@@ -199,13 +154,7 @@ export function RecordingsList({
                     </h3>
                     <div className='grid grid-cols-[repeat(auto-fill,minmax(220px,1fr))] gap-4'>
                         {group.items.map((project) => (
-                            <RecordingCard
-                                key={project.id}
-                                project={project}
-                                selected={project.id === selectedId}
-                                onSelect={() => onSelect(project)}
-                                onOpen={() => onOpen(project)}
-                            />
+                            <RecordingCard key={project.id} project={project} onOpen={() => onOpen(project)} onDeleted={onDeleted} />
                         ))}
                     </div>
                 </section>
@@ -214,11 +163,81 @@ export function RecordingsList({
     );
 }
 
-/** The first frame of a recording, from its screen track. */
-function Thumbnail({ project }: { project: Project }) {
-    return (
-        <video src={`${fileUrl(project, project.tracks.screen.file)}#t=0.5`} preload='metadata' muted className='absolute inset-0 h-full w-full object-contain' />
+/** Poster frames are made one at a time, so a big library doesn't decode dozens of videos at once. */
+let posterQueue: Promise<unknown> = Promise.resolve();
+
+/** Grabs a frame half a second in, saves it as thumb.jpg in the project and returns a URL for it. */
+function makePoster(project: Project) {
+    const job = posterQueue.then(
+        () =>
+            new Promise<string>((resolve, reject) => {
+                const video = document.createElement('video');
+                video.muted = true;
+                video.preload = 'auto';
+                video.src = fileUrl(project, project.tracks.screen.file);
+                const done = () => {
+                    video.removeAttribute('src');
+                    video.load();
+                };
+                video.onerror = () => {
+                    done();
+                    reject(new Error('Could not read the recording'));
+                };
+                video.onloadeddata = () => {
+                    video.currentTime = Math.min(0.5, Math.max(0, project.tracks.screen.duration - 0.05));
+                };
+                video.onseeked = () => {
+                    const canvas = document.createElement('canvas');
+                    canvas.width = 480;
+                    canvas.height = Math.max(1, Math.round((480 * video.videoHeight) / Math.max(1, video.videoWidth)));
+                    canvas.getContext('2d')?.drawImage(video, 0, 0, canvas.width, canvas.height);
+                    done();
+                    canvas.toBlob(
+                        (blob) => {
+                            if (!blob) return reject(new Error('Could not make a thumbnail'));
+                            api.saveThumbnail(project.id, blob).catch(() => {});
+                            resolve(URL.createObjectURL(blob));
+                        },
+                        'image/jpeg',
+                        0.8
+                    );
+                };
+            })
     );
+    posterQueue = job.catch(() => {});
+    return job;
+}
+
+/** The recording's thumbnail (thumb.jpg: custom, or a frame made the first time it's needed). */
+function Thumbnail({ project }: { project: Project }) {
+    const [url, setUrl] = useState<string | null>(null);
+    const [failed, setFailed] = useState(false);
+    // Read fresh rather than from the cache, so a thumbnail set in the editor shows here at once.
+    useEffect(() => {
+        let cancelled = false;
+        fetch(fileUrl(project, 'thumb.jpg'), { cache: 'no-store' })
+            .then((response) => (response.ok ? response.blob() : Promise.reject(new Error('no thumbnail'))))
+            .then(
+                (blob) => {
+                    if (!cancelled) setUrl(URL.createObjectURL(blob));
+                },
+                () => {
+                    if (!cancelled) makePoster(project).then(setUrl, () => setFailed(true));
+                }
+            );
+        return () => {
+            cancelled = true;
+        };
+    }, [project]);
+    useEffect(
+        () => () => {
+            if (url?.startsWith('blob:')) URL.revokeObjectURL(url);
+        },
+        [url]
+    );
+    if (failed) return <Film className='absolute left-1/2 top-1/2 h-5 w-5 -translate-x-1/2 -translate-y-1/2 text-subtle' />;
+    if (!url) return null;
+    return <img src={url} alt='' draggable={false} className='absolute inset-0 h-full w-full object-contain' onError={() => setFailed(true)} />;
 }
 
 function TrackIcons({ project, className }: { project: Project; className?: string }) {
@@ -244,114 +263,72 @@ function TrackIcons({ project, className }: { project: Project; className?: stri
     );
 }
 
-function RecordingCard({ project, selected, onSelect, onOpen }: { project: Project; selected: boolean; onSelect: () => void; onOpen: () => void }) {
+function RecordingCard({ project, onOpen, onDeleted }: { project: Project; onOpen: () => void; onDeleted: () => void }) {
     const SourceIcon = SOURCE_ICONS[project.source.type] ?? Monitor;
     return (
-        <button
-            onClick={onSelect}
-            onDoubleClick={onOpen}
-            className={cx(
-                'group block w-full cursor-default overflow-hidden rounded-xl border bg-panel text-left shadow-sm transition-colors',
-                selected ? 'border-accent ring-2 ring-accent/30' : 'border-line hover:border-line-strong'
-            )}
-            title='Double-click to open in the editor'
-        >
-            <span className='relative block aspect-video w-full overflow-hidden bg-stage'>
-                <Thumbnail project={project} />
-                <span className='absolute bottom-2 left-2 rounded-md bg-black/70 px-1.5 py-0.5 font-mono text-[11px] text-white'>{formatDuration(project.duration)}</span>
-                <TrackIcons project={project} className='absolute bottom-2 right-2 rounded-md bg-black/60 px-1.5 py-1 text-white' />
-            </span>
-            <span className='flex items-center gap-3 px-3 py-2.5'>
-                <span className='flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-panel-2 text-muted'>
-                    <SourceIcon className='h-4 w-4' />
+        <div className='group relative rounded-xl border border-line bg-panel shadow-sm transition-[border-color,transform,box-shadow] duration-200 focus-within:z-10 hover:z-10 hover:-translate-y-0.5 hover:border-line-strong hover:shadow-md'>
+            <button onClick={onOpen} className='block w-full cursor-default text-left' title='Open in the editor'>
+                <span className='relative block aspect-video w-full overflow-hidden rounded-t-[11px] bg-stage'>
+                    <Thumbnail project={project} />
+                    <span className='absolute bottom-2 left-2 rounded-md bg-black/70 px-1.5 py-0.5 font-mono text-[11px] text-white'>{formatDuration(project.duration)}</span>
+                    <TrackIcons project={project} className='absolute bottom-2 right-2 rounded-md bg-black/60 px-1.5 py-1 text-white' />
                 </span>
-                <span className='min-w-0'>
-                    <span className='block truncate text-sm font-medium'>{project.source.name}</span>
-                    <span className='block text-xs text-subtle' title={new Date(project.createdAt).toLocaleString()}>
-                        {whenRecorded(project.createdAt)}
+                <span className='flex items-center gap-2.5 px-3 py-2.5 pr-20'>
+                    <SourceIcon className='h-4 w-4 shrink-0 text-subtle' />
+                    <span className='min-w-0'>
+                        <span className='block truncate text-sm font-medium'>{project.source.name}</span>
+                        <span className='block text-xs text-subtle' title={new Date(project.createdAt).toLocaleString()}>
+                            {whenRecorded(project.createdAt)}
+                        </span>
                     </span>
                 </span>
-            </span>
-        </button>
+            </button>
+            <div className='absolute bottom-2 right-2'>
+                <RecordingMenu project={project} onDeleted={onDeleted} />
+            </div>
+        </div>
     );
 }
 
-const SOURCE_LABELS = { display: 'Whole screen', window: 'One window', area: 'Part of the screen' };
-
-/** The selected recording: what's in it, and what to do with it. */
-export function RecordingDetails({ project, onOpen, onDeleted }: { project: Project; onOpen: () => void; onDeleted: () => void }) {
-    const [confirming, setConfirming] = useState(false);
-    const { tracks } = project;
-    const SourceIcon = SOURCE_ICONS[project.source.type] ?? Monitor;
-    const size = tracks.screen.width && tracks.screen.height ? `${tracks.screen.width} × ${tracks.screen.height}` : null;
-
+/** Show in Finder and Delete. Delete moves the recording to the Trash straight away (recoverable from Finder). */
+function RecordingMenu({ project, onDeleted }: { project: Project; onDeleted: () => void }) {
+    const [deleting, setDeleting] = useState(false);
     const remove = async () => {
+        setDeleting(true);
         try {
             await api.deleteRecording(project.id);
+            toast.success('Moved to the Trash', { description: 'Put it back from the Trash in Finder if you need it.' });
             onDeleted();
         } catch (error) {
             toast.error(errorMessage(error));
+            setDeleting(false);
         }
     };
-
-    const rows: [string, ReactNode][] = [
-        ['Recorded', new Date(project.createdAt).toLocaleString(undefined, { dateStyle: 'medium', timeStyle: 'short' })],
-        ['Length', formatDuration(project.duration)],
-        ['Source', SOURCE_LABELS[project.source.type] ?? project.source.type],
-        ...(size ? ([['Size', `${size} px`]] as [string, ReactNode][]) : []),
-        ['Microphone', tracks.microphone ? 'Recorded' : 'None'],
-        ['Mac audio', tracks.systemAudio ? 'Recorded' : 'None'],
-        ['Camera', tracks.camera ? 'Recorded' : 'None'],
-    ];
-
     return (
-        <div className='flex h-full flex-col overflow-hidden rounded-2xl border border-line bg-panel shadow-sm'>
-            <div className='min-h-0 flex-1 space-y-5 overflow-y-auto p-5'>
-                <div className='flex items-start gap-3'>
-                    <span className='flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-panel-2 text-muted'>
-                        <SourceIcon className='h-4 w-4' />
-                    </span>
-                    <div className='min-w-0'>
-                        <h3 className='truncate font-serif text-lg font-medium tracking-tight' title={project.source.name}>
-                            {project.source.name}
-                        </h3>
-                        <p className='text-xs text-subtle'>{whenRecorded(project.createdAt)}</p>
-                    </div>
-                </div>
-                <dl className='divide-y divide-line rounded-xl border border-line text-sm'>
-                    {rows.map(([label, value]) => (
-                        <div key={label} className='flex items-center justify-between gap-4 px-3 py-2'>
-                            <dt className='text-muted'>{label}</dt>
-                            <dd className='truncate text-right'>{value}</dd>
-                        </div>
-                    ))}
-                </dl>
-            </div>
-            <div className='space-y-2 border-t border-line p-4'>
-                <Button variant='primary' className='w-full' onClick={onOpen}>
-                    <Pencil className='h-4 w-4' /> Open in editor
-                </Button>
-                {confirming ? (
-                    <div className='flex items-center gap-2 rounded-lg bg-danger-soft p-2 text-xs'>
-                        <span className='flex-1 text-danger-fg'>Delete this recording and its edits for good?</span>
-                        <Button size='sm' variant='danger' onClick={remove}>
-                            Delete
-                        </Button>
-                        <Button size='sm' variant='ghost' onClick={() => setConfirming(false)}>
-                            Keep
-                        </Button>
-                    </div>
-                ) : (
-                    <div className='grid grid-cols-2 gap-2'>
-                        <Button size='sm' onClick={() => revealItemInDir(project.path)}>
-                            <FolderOpen className='h-3.5 w-3.5' /> Show in Finder
-                        </Button>
-                        <Button size='sm' onClick={() => setConfirming(true)}>
-                            <Trash2 className='h-3.5 w-3.5' /> Delete
-                        </Button>
-                    </div>
-                )}
-            </div>
+        <div className='flex items-center gap-0.5 opacity-70 transition-opacity group-hover:opacity-100'>
+            <IconButton
+                label='Show in Finder'
+                size='icon-sm'
+                className='h-7 w-7'
+                onClick={(e) => {
+                    e.stopPropagation();
+                    revealItemInDir(project.path);
+                }}
+            >
+                <FolderOpen className='h-3.5 w-3.5' />
+            </IconButton>
+            <IconButton
+                label='Move to Trash'
+                size='icon-sm'
+                className='h-7 w-7 hover:bg-danger-soft hover:text-danger-fg'
+                disabled={deleting}
+                onClick={(e) => {
+                    e.stopPropagation();
+                    remove();
+                }}
+            >
+                <Trash2 className='h-3.5 w-3.5' />
+            </IconButton>
         </div>
     );
 }

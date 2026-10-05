@@ -36,15 +36,15 @@ Google, and a **React UI** that edits, renders and encodes the video.
 
 | Path | What it is |
 |---|---|
-| `recorder/Sources/CapturitaRecorder/` | ScreenCaptureKit recorder: sources, area picker, camera bubble, control bar, cursor tracking, mic, track writer; talks to Rust over stdin/stdout (`IPC.swift`) |
+| `recorder/Sources/CapturitaRecorder/` | ScreenCaptureKit recorder: sources, area picker, camera bubble, control bar, cursor tracking, mic, track writer, the 1080p preview copy (`Preview.swift`), moving deleted recordings to the Trash; talks to Rust over stdin/stdout (`IPC.swift`) |
 | `src-tauri/src/helper.rs` | Starts and talks to the recorder helper |
 | `src-tauri/src/recording.rs` | Recordings in `~/Movies/Capturita`, projects, permissions |
-| `src-tauri/src/captions.rs` | Whisper (whisper.cpp + Metal, large-v3 turbo q5) → timed words |
+| `src-tauri/src/captions.rs` | Whisper (whisper.cpp + Metal): the speech models (the same list as Murmur's), the chosen one, and audio → timed words |
 | `src-tauri/src/ai.rs` | AI editing: the model list (Qwen3 4B, Gemma 4 12B), downloads, the chosen model, the bundled llama-server, JSON-schema forced answers |
 | `src-tauri/src/export.rs` | Streams the encoded MP4 to disk in chunks |
 | `src-tauri/src/google.rs` | Google sign-in (PKCE, loopback), YouTube and Drive resumable uploads |
 | `src/windows/` | Main window (recorder + recordings) and the editor |
-| `src/editor/` | The editor: `model.ts` (the edit), `render.ts` (draws a frame), `export.ts` (encodes the MP4), `aiEdit.ts`, timeline, panels |
+| `src/editor/` | The editor: `model.ts` (the edit, auto-zoom), `motion.ts` (spring cursor and zoom camera), `render.ts` (draws a frame), `export.ts` (encodes the MP4 or GIF), `gif.ts` (GIF encoder), `aiEdit.ts`, timeline, panels |
 | `src/components/` | Recorder panel, recordings list, setup flow, Settings dialog, shared UI |
 | `src/lib/` | Tauri API wrapper, setup state, theme |
 
@@ -59,12 +59,28 @@ Inter, Source Serif and JetBrains Mono). Video is decoded and encoded in the web
   the camera bubble, restyle the cursor and add zooms afterwards.
 - **Editing is non-destructive:** an edit is a description (cuts, speeds, zooms, text, hidden
   areas, captions, audio) applied on top of the original tracks at render time.
+- **Motion:** the cursor and the zoom camera are springs (an exact damped-spring solution per
+  step). A spring has state, but a frame must look the same in the preview and the export, so
+  each path is simulated once over the whole recording at 120 steps a second, cached, and looked
+  up by time (`motion.ts`). Before smoothing, pauses are held (no creeping across them) and hand
+  shake is removed; the cursor is pinned to each click point. The camera zooms in log space,
+  aims before zooming in, re-aims only when the cursor leaves the middle of the view, and keeps
+  its velocity from one zoom to the next.
+- **Preview:** the editor plays `screen-preview.mp4`, a 1080p copy made by the helper with
+  AVFoundation the first time a recording is opened (kept only if its length matches; never made
+  during a recording). Full-size Retina H.264 of busy content can peak far above what the webview
+  decodes in real time. Screen motion blur is left out of the preview for the same reason.
 - **Export:** the webview renders each frame, encodes with WebCodecs, and streams the MP4 to Rust
   in binary chunks with their byte position, so long exports never have to fit in memory. A
   cancelled or failed export's partial file is deleted.
-- **Captions:** the editor mixes the audio to 16 kHz mono and sends it to Rust; Whisper returns
-  every word with its timing. Words in near-silent audio (Whisper's "Thank you.") are dropped,
-  and words stretched back over a pause are moved to where the voice actually is.
+- **Captions:** the editor sends each chosen track (mic, system audio) to Rust separately as
+  16 kHz mono. The audio is cut into ~15 s windows at quiet moments and trimmed to where there's
+  sound (relative to the track's own noise and loudness), since Whisper invents words like
+  "Thank you." for silence. The language is detected from the window with the most speech; a
+  short window that seems to switch is redone in that language. Words are assembled from the
+  tokens' raw bytes, so non-Latin letters split across tokens stay whole. Large models decode
+  with beam search, the small ones greedily. Words stretched back over a pause are moved to where
+  the voice actually is.
 - **AI editing:** the request, the transcript and the recording's details go to the local model;
   llama.cpp turns the answer's JSON schema into a grammar, so the reply is always valid edits.
   The server starts only when needed (with thinking off) and stops after 10 minutes idle. The

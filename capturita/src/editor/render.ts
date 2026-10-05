@@ -1,5 +1,6 @@
-import type { CursorData, Project } from '../lib/api';
-import { captionAt, fontStack, hideActive, textFrame, zoomAmount, type Caption, type CaptionStyle, type HideRegion, type TextFrame, type Background, type CursorShape, type Edit, type NormalizedRect, type TextOverlay } from './model';
+import { fileUrl, type CursorData, type Project } from '../lib/api';
+import { cameraViewport, cursorVisibility, smoothCursorAt } from './motion';
+import { captionAt, fontStack, hideActive, textFrame, type Caption, type CaptionStyle, type HideRegion, type TextFrame, type Background, type CursorShape, type Edit, type NormalizedRect, type TextOverlay } from './model';
 
 /** Cursor height in screen points before scaling. */
 const CURSOR_POINTS = 22;
@@ -9,10 +10,10 @@ const PRESS_DEPTH = 0.22;
 const PRESS_IN = 0.08;
 const PRESS_OUT = 0.22;
 const FULL: NormalizedRect = { x: 0, y: 0, width: 1, height: 1 };
-/** Longest cursor smoothing window, in seconds (at smoothing = 1). */
-const MAX_SMOOTHING_WINDOW = 0.3;
-/** How far around t a followed zoom looks when centring on the cursor, so the camera glides. */
-const FOLLOW_WINDOW = 0.8;
+/** Motion blur looks back over this much time at full strength (half a frame at 60 fps, like a 180° shutter). */
+const SHUTTER = 1 / 120;
+/** Most screen copies blended for motion blur. */
+const BLUR_SAMPLES = 5;
 
 export interface Rect {
     x: number;
@@ -45,6 +46,14 @@ export interface FrameInputs {
     time: number;
     /** Crop editing shows the whole recording so the crop box can be moved over it. */
     ignoreCrop?: boolean;
+    /** Show the cropped screen without zooming (while placing a zoom's focus). */
+    noZoom?: boolean;
+    /**
+     * Drawing for the live preview. Screen motion blur is left out there: it means copying the
+     * full-size video frame again on every frame of a zoom, which stalls playback of big
+     * (Retina) recordings. Exports always include it.
+     */
+    preview?: boolean;
 }
 
 /** Where the screen sits inside a frame of the given size. */
@@ -66,46 +75,21 @@ export function layoutFrame(edit: Edit, project: Project, width: number, height:
 
 /**
  * The part of the (cropped) screen in view at source time t, normalized to the cropped screen.
- * The strongest active zoom wins; its focus eases towards the cursor (or its fixed point).
+ * The camera is a spring simulation over the zooms (see motion.ts), so zooms ease in and out,
+ * pan smoothly while following the cursor, and glide from one zoom to the next.
  */
 export function zoomViewport(edit: Edit, cursor: CursorData | null, t: number, crop: NormalizedRect): NormalizedRect {
-    let best = null as { amount: number; scale: number; x: number; y: number } | null;
-    for (const zoom of edit.zooms) {
-        const amount = zoomAmount(zoom, t);
-        if (amount <= 0 || (best && amount * (zoom.scale - 1) <= best.amount * (best.scale - 1))) continue;
-        let x = zoom.x;
-        let y = zoom.y;
-        if (zoom.mode === 'follow' && cursor) {
-            const point = smoothedCursor(cursor, t, FOLLOW_WINDOW);
-            if (point) {
-                x = (point.x - crop.x) / crop.width;
-                y = (point.y - crop.y) / crop.height;
-            }
-        }
-        best = { amount, scale: zoom.scale, x, y };
-    }
-    if (!best) return FULL;
-    const scale = 1 + (best.scale - 1) * best.amount;
-    const size = 1 / scale;
-    // Blend the focus from the centre so zooming in and out doesn't jump sideways.
-    const cx = 0.5 + (best.x - 0.5) * best.amount;
-    const cy = 0.5 + (best.y - 0.5) * best.amount;
-    return {
-        x: Math.min(1 - size, Math.max(0, cx - size / 2)),
-        y: Math.min(1 - size, Math.max(0, cy - size / 2)),
-        width: size,
-        height: size,
-    };
+    return cameraViewport({ zooms: edit.zooms, crop, cursor, cursorAnimation: edit.cursor.animation, screen: edit.motion.screen }, t);
 }
 
 /**
  * Which part of the recorded screen is visible at source time t (crop and zoom applied, normalized
  * to the whole recording), and where it is drawn in a frame of the given size.
  */
-export function screenView(edit: Edit, project: Project, cursor: CursorData | null, time: number, width: number, height: number, ignoreCrop = false) {
+export function screenView(edit: Edit, project: Project, cursor: CursorData | null, time: number, width: number, height: number, ignoreCrop = false, noZoom = false) {
     const baseCrop = ignoreCrop ? FULL : edit.crop;
     // Zooming narrows the visible part of the screen further.
-    const view = ignoreCrop ? FULL : zoomViewport(edit, cursor, time, baseCrop);
+    const view = ignoreCrop || noZoom ? FULL : zoomViewport(edit, cursor, time, baseCrop);
     const crop = {
         x: baseCrop.x + view.x * baseCrop.width,
         y: baseCrop.y + view.y * baseCrop.height,
@@ -130,12 +114,12 @@ export function screenRectToFrame(rect: NormalizedRect, view: { crop: Normalized
 
 export function drawFrame(ctx: CanvasRenderingContext2D, width: number, height: number, inputs: FrameInputs): Rect {
     const { edit, project, screen, camera, cursor, time } = inputs;
-    const { crop, content } = screenView(edit, project, cursor, time, width, height, inputs.ignoreCrop);
+    const { crop, content } = screenView(edit, project, cursor, time, width, height, inputs.ignoreCrop, inputs.noZoom);
     const radius = Math.min(edit.radius * width, content.width / 2, content.height / 2);
 
     ctx.save();
     ctx.clearRect(0, 0, width, height);
-    fillBackground(ctx, edit.background, width, height);
+    fillBackground(ctx, edit.background, width, height, project);
 
     // Screen with its shadow.
     if (edit.shadow > 0) {
@@ -154,17 +138,25 @@ export function drawFrame(ctx: CanvasRenderingContext2D, width: number, height: 
     ctx.fillStyle = '#000';
     ctx.fillRect(content.x, content.y, content.width, content.height);
     if (screen) {
-        ctx.drawImage(
-            screen.image,
-            crop.x * screen.width,
-            crop.y * screen.height,
-            crop.width * screen.width,
-            crop.height * screen.height,
-            content.x,
-            content.y,
-            content.width,
-            content.height
-        );
+        ctx.imageSmoothingEnabled = true;
+        ctx.imageSmoothingQuality = 'high';
+        const drawScreen = (view: NormalizedRect) =>
+            ctx.drawImage(screen.image, view.x * screen.width, view.y * screen.height, view.width * screen.width, view.height * screen.height, content.x, content.y, content.width, content.height);
+        const trail = inputs.ignoreCrop || inputs.noZoom || inputs.preview ? [] : blurTrail(edit, project, cursor, time, width, height, crop, content);
+        const blurSource = trail.length > 0 ? copyForBlur(screen, trail, content) : null;
+        if (blurSource) {
+            // Average the views along the camera's recent path: each copy covers its share. They
+            // are drawn from one small copy of the frame: reading a big video frame several times
+            // per frame is slow enough to stall playback.
+            const { canvas, area, scaleX, scaleY } = blurSource;
+            trail.forEach((view, i) => {
+                ctx.globalAlpha = 1 / (i + 1);
+                ctx.drawImage(canvas, (view.x - area.x) * scaleX, (view.y - area.y) * scaleY, view.width * scaleX, view.height * scaleY, content.x, content.y, content.width, content.height);
+            });
+            ctx.globalAlpha = 1;
+        } else {
+            drawScreen(crop);
+        }
         // Hidden areas go over the screen but under the cursor (the cursor is never private).
         for (const hide of edit.hides) {
             if (hideActive(hide, time)) drawHide(ctx, hide, screen, screenRectToFrame(hide, { crop, content }), width, height);
@@ -173,36 +165,41 @@ export function drawFrame(ctx: CanvasRenderingContext2D, width: number, height: 
 
     // Cursor and clicks, mapped from the recorded area into the cropped screen.
     if (cursor && edit.cursor.visible) {
+        const style = edit.cursor;
         const areaPoints = project.source.area.width * crop.width;
         const scale = content.width / areaPoints;
         const toFrame = (x: number, y: number) => ({
             x: content.x + ((x - crop.x) / crop.width) * content.width,
             y: content.y + ((y - crop.y) / crop.height) * content.height,
         });
-        const unit = scale * edit.cursor.size;
+        const unit = scale * style.size;
         let lastClick = -Infinity;
-        for (const [t, x, y] of cursor.clicks) {
+        for (const [t, x, y, button] of cursor.clicks) {
             if (t <= time) lastClick = Math.max(lastClick, t);
-            if (edit.cursor.clickStyle === 'none' || time < t || time >= t + CLICK_DURATION) continue;
-            const progress = (time - t) / CLICK_DURATION;
-            const point = toFrame(x, y);
-            ctx.beginPath();
-            if (edit.cursor.clickStyle === 'ripple') {
-                ctx.arc(point.x, point.y, (8 + progress * 22) * unit, 0, Math.PI * 2);
-                ctx.strokeStyle = `rgba(124, 92, 255, ${1 - progress})`;
-                ctx.lineWidth = Math.max(1.5, 2.5 * scale);
-                ctx.stroke();
-            } else {
-                ctx.arc(point.x, point.y, (7 + progress * 9) * unit, 0, Math.PI * 2);
-                ctx.fillStyle = `rgba(124, 92, 255, ${0.5 * (1 - progress)})`;
-                ctx.fill();
-            }
+            if (style.clickStyle === 'none' || time < t || time >= t + CLICK_DURATION) continue;
+            drawClick(ctx, style.clickStyle, style.clickColor, toFrame(x, y), (time - t) / CLICK_DURATION, unit, scale, button === 'right');
         }
-        const pointer = smoothedCursor(cursor, time, edit.cursor.smoothing * MAX_SMOOTHING_WINDOW);
+        const alpha = style.hideIdle ? cursorVisibility(cursor, time, style.idleDelay) : 1;
+        const pointer = alpha > 0.001 ? smoothCursorAt(cursor, time, style.animation) : null;
         if (pointer) {
             const point = toFrame(pointer.x, pointer.y);
-            const press = edit.cursor.pressEffect ? pressAmount(time - lastClick) : 0;
-            drawCursor(ctx, edit.cursor.shape, point.x, point.y, CURSOR_POINTS * unit * (1 - PRESS_DEPTH * press));
+            const press = style.pressEffect ? pressAmount(time - lastClick) : 0;
+            const size = CURSOR_POINTS * unit * (1 - PRESS_DEPTH * press);
+            // Motion blur: fainter copies along where the cursor just was, in frame pixels.
+            const blur = edit.motion.blur;
+            const before = blur > 0 ? smoothCursorAt(cursor, time - (SHUTTER * 4) * blur, style.animation) : null;
+            const trail = before ? toFrame(before.x, before.y) : point;
+            const distance = Math.hypot(point.x - trail.x, point.y - trail.y);
+            const copies = Math.min(8, Math.floor(distance / Math.max(1, size * 0.08)));
+            ctx.save();
+            for (let i = copies; i >= 1; i--) {
+                const k = i / (copies + 1);
+                ctx.globalAlpha = alpha * (1 - k) * 0.35;
+                drawCursor(ctx, style.shape, point.x + (trail.x - point.x) * k, point.y + (trail.y - point.y) * k, size);
+            }
+            ctx.globalAlpha = alpha;
+            drawCursor(ctx, style.shape, point.x, point.y, size);
+            ctx.restore();
         }
     }
     ctx.restore();
@@ -210,7 +207,9 @@ export function drawFrame(ctx: CanvasRenderingContext2D, width: number, height: 
     // Camera bubble.
     if (camera && inputs.cameraActive && edit.camera.visible) {
         const short = Math.min(width, height);
-        const size = edit.camera.size * short;
+        // Shrink to 70% while zoomed in (fully by 1.5×), so the bubble covers less of the action.
+        const zoomedIn = edit.camera.shrinkOnZoom && !inputs.ignoreCrop ? Math.min(1, Math.max(0, (edit.crop.width / crop.width - 1) / 0.5)) : 0;
+        const size = edit.camera.size * short * (1 - 0.3 * zoomedIn);
         const margin = Math.max(edit.padding * short * 0.6, short * 0.03);
         const left = edit.camera.corner.endsWith('left');
         const top = edit.camera.corner.startsWith('top');
@@ -503,11 +502,49 @@ function drawText(ctx: CanvasRenderingContext2D, text: TextOverlay, width: numbe
     ctx.restore();
 }
 
-export function backgroundCss(background: Background) {
+export function backgroundCss(background: Background, project?: Project) {
+    if (background.type === 'image') return project ? `center / cover no-repeat url("${fileUrl(project, background.file)}")` : '#444';
     return background.type === 'gradient' ? `linear-gradient(${background.angle}deg, ${background.from}, ${background.to})` : background.color;
 }
 
-function fillBackground(ctx: CanvasRenderingContext2D, background: Background, width: number, height: number) {
+/** Loaded background images by URL. Drawing can't wait, so the preview fills grey until it loads. */
+const images = new Map<string, HTMLImageElement>();
+
+function loadImage(url: string) {
+    let image = images.get(url);
+    if (!image) {
+        image = new Image();
+        image.decoding = 'async';
+        image.src = url;
+        images.set(url, image);
+    }
+    return image;
+}
+
+/** Waits for the background image (if any), so every exported frame has it. */
+export async function preloadBackground(project: Project, background: Background) {
+    if (background.type !== 'image') return;
+    const image = loadImage(fileUrl(project, background.file));
+    if (!image.complete) await image.decode().catch(() => {});
+}
+
+function fillBackground(ctx: CanvasRenderingContext2D, background: Background, width: number, height: number, project: Project) {
+    if (background.type === 'image') {
+        const image = loadImage(fileUrl(project, background.file));
+        ctx.fillStyle = '#3a3a3a';
+        ctx.fillRect(0, 0, width, height);
+        if (!image.complete || image.naturalWidth === 0) return;
+        // Cover the frame; blur bleeds in transparent edges, so draw a little larger when blurred.
+        const blur = background.blur * Math.min(width, height) * 0.04;
+        const scale = Math.max(width / image.naturalWidth, height / image.naturalHeight) * (blur > 0 ? 1.08 : 1);
+        const w = image.naturalWidth * scale;
+        const h = image.naturalHeight * scale;
+        ctx.save();
+        if (blur > 0.5) ctx.filter = `blur(${blur.toFixed(1)}px)`;
+        ctx.drawImage(image, (width - w) / 2, (height - h) / 2, w, h);
+        ctx.restore();
+        return;
+    }
     if (background.type === 'color') {
         ctx.fillStyle = background.color;
     } else {
@@ -621,43 +658,89 @@ function drawArrow(ctx: CanvasRenderingContext2D, x: number, y: number, size: nu
 }
 
 /**
- * Cursor position averaged over a window centred on t. Averaging (instead of a spring) gives
- * the same result every time a frame is drawn, which export needs.
+ * Views of the screen along the camera's path over the last moment, newest first, when it moved
+ * enough to need motion blur; otherwise empty. The spread is measured in frame pixels so the
+ * blur looks the same in the preview and at any export size.
  */
-export function smoothedCursor(data: CursorData, t: number, window: number) {
-    if (window <= 0.001) return cursorAt(data, t);
-    const samples = 9;
-    let x = 0;
-    let y = 0;
-    let weight = 0;
-    for (let i = 0; i < samples; i++) {
-        const offset = (i / (samples - 1) - 0.5) * window;
-        const point = cursorAt(data, t + offset);
-        if (!point) return null;
-        const w = 1 - Math.abs(offset) / window; // triangle weights favour the present
-        x += point.x * w;
-        y += point.y * w;
-        weight += w;
-    }
-    return { x: x / weight, y: y / weight };
+function blurTrail(edit: Edit, project: Project, cursor: CursorData | null, time: number, width: number, height: number, crop: NormalizedRect, content: Rect): NormalizedRect[] {
+    const strength = edit.motion.blur;
+    if (strength <= 0 || edit.zooms.length === 0) return [];
+    const span = SHUTTER * 4 * strength;
+    const previous = screenView(edit, project, cursor, time - span, width, height).crop;
+    // How far the edges of the view moved on screen.
+    const px = (dx: number) => (Math.abs(dx) / crop.width) * content.width;
+    const py = (dy: number) => (Math.abs(dy) / crop.height) * content.height;
+    const shift = Math.max(px(previous.x - crop.x), px(previous.x + previous.width - crop.x - crop.width), py(previous.y - crop.y), py(previous.y + previous.height - crop.y - crop.height));
+    if (shift < 1.5) return [];
+    const count = Math.min(BLUR_SAMPLES, 1 + Math.ceil(shift / 3));
+    const views: NormalizedRect[] = [crop];
+    for (let i = 1; i < count; i++) views.push(screenView(edit, project, cursor, time - (span * i) / (count - 1), width, height).crop);
+    return views;
 }
 
-/** Linear interpolation between the recorded cursor samples. */
-export function cursorAt(data: CursorData, t: number) {
-    const moves = data.moves;
-    if (moves.length === 0) return null;
-    if (t <= moves[0][0]) return { x: moves[0][1], y: moves[0][2] };
-    let low = 0;
-    let high = moves.length - 1;
-    while (low < high) {
-        const mid = (low + high + 1) >> 1;
-        if (moves[mid][0] <= t) low = mid;
-        else high = mid - 1;
+let blurCanvas: HTMLCanvasElement | null = null;
+
+/**
+ * Copies the part of the screen frame that the blur views cover, once, at about the size it's
+ * drawn, so the views can be drawn from it cheaply. Coordinates are normalized to the recording.
+ */
+function copyForBlur(screen: FrameSource, views: NormalizedRect[], content: Rect) {
+    const left = Math.min(...views.map((v) => v.x));
+    const top = Math.min(...views.map((v) => v.y));
+    const right = Math.max(...views.map((v) => v.x + v.width));
+    const bottom = Math.max(...views.map((v) => v.y + v.height));
+    const area = { x: left, y: top, width: right - left, height: bottom - top };
+    // Pixels per normalized unit, matching the newest view's on-screen size (and never more than the source).
+    const scaleX = Math.min(screen.width, content.width / views[0].width);
+    const scaleY = Math.min(screen.height, content.height / views[0].height);
+    const w = Math.max(1, Math.ceil(area.width * scaleX));
+    const h = Math.max(1, Math.ceil(area.height * scaleY));
+    blurCanvas ??= document.createElement('canvas');
+    if (blurCanvas.width < w) blurCanvas.width = w;
+    if (blurCanvas.height < h) blurCanvas.height = h;
+    const c = blurCanvas.getContext('2d');
+    if (!c) return null;
+    c.imageSmoothingEnabled = true;
+    c.imageSmoothingQuality = 'high';
+    c.drawImage(screen.image, area.x * screen.width, area.y * screen.height, area.width * screen.width, area.height * screen.height, 0, 0, w, h);
+    return { canvas: blurCanvas, area, scaleX: w / area.width, scaleY: h / area.height };
+}
+
+const easeOutCubic = (x: number) => 1 - (1 - x) ** 3;
+
+/** A click at `point`, `progress` 0 → 1 through its animation. Right-clicks get a double ring. */
+function drawClick(ctx: CanvasRenderingContext2D, style: 'ripple' | 'pulse', color: string, point: { x: number; y: number }, progress: number, unit: number, scale: number, right: boolean) {
+    const grow = easeOutCubic(progress);
+    const fade = 1 - progress * progress;
+    ctx.save();
+    ctx.strokeStyle = color;
+    ctx.fillStyle = color;
+    if (style === 'ripple') {
+        const radius = (6 + grow * 20) * unit;
+        ctx.lineWidth = Math.max(1.5, 2.5 * scale * (1 - progress * 0.5));
+        ctx.globalAlpha = fade;
+        ctx.beginPath();
+        ctx.arc(point.x, point.y, radius, 0, Math.PI * 2);
+        ctx.stroke();
+        // A soft fill under the ring, strongest at the moment of the click.
+        ctx.globalAlpha = 0.18 * (1 - grow);
+        ctx.fill();
+        if (right) {
+            ctx.globalAlpha = fade * 0.7;
+            ctx.beginPath();
+            ctx.arc(point.x, point.y, radius * 0.6, 0, Math.PI * 2);
+            ctx.stroke();
+        }
+    } else {
+        ctx.globalAlpha = 0.45 * fade;
+        ctx.beginPath();
+        ctx.arc(point.x, point.y, (7 + grow * 9) * unit, 0, Math.PI * 2);
+        ctx.fill();
+        if (right) {
+            ctx.globalAlpha = 0.6 * fade;
+            ctx.lineWidth = Math.max(1, 1.5 * scale);
+            ctx.stroke();
+        }
     }
-    const [t0, x0, y0] = moves[low];
-    const next = moves[low + 1];
-    if (!next) return { x: x0, y: y0 };
-    const [t1, x1, y1] = next;
-    const k = t1 > t0 ? Math.min(1, (t - t0) / (t1 - t0)) : 0;
-    return { x: x0 + (x1 - x0) * k, y: y0 + (y1 - y0) * k };
+    ctx.restore();
 }

@@ -102,19 +102,6 @@ export function Switch({
     );
 }
 
-export function Field({ label, icon, children, hint }: { label: string; icon?: ReactNode; children: ReactNode; hint?: ReactNode }) {
-    return (
-        <div className='space-y-2'>
-            <div className='flex items-center gap-2 text-[11px] font-semibold uppercase tracking-wider text-subtle'>
-                {icon}
-                {label}
-            </div>
-            {children}
-            {hint && <p className='text-xs text-muted'>{hint}</p>}
-        </div>
-    );
-}
-
 /**
  * One-of-many choice. The selected option is marked by an indicator that glides between
  * options (disabled by the reduced-motion setting via index.css).
@@ -289,6 +276,61 @@ export function Popover({
                     {typeof children === 'function' ? children(close) : children}
                 </div>
             )}
+        </div>
+    );
+}
+
+/**
+ * A centred dialog over a dimmed backdrop. Esc and clicking the backdrop close it unless
+ * `dismissable` is false (e.g. while an export is running).
+ */
+export function Modal({
+    onClose,
+    dismissable = true,
+    className,
+    children,
+    ...rest
+}: {
+    onClose: () => void;
+    dismissable?: boolean;
+    className?: string;
+    children: ReactNode;
+} & Record<`data-${string}`, unknown>) {
+    const closeRef = useRef(onClose);
+    closeRef.current = onClose;
+    const dismissRef = useRef(dismissable);
+    dismissRef.current = dismissable;
+    useEffect(() => {
+        const onKey = (event: KeyboardEvent) => {
+            if (event.key !== 'Escape') return;
+            event.stopPropagation();
+            if (dismissRef.current) closeRef.current();
+        };
+        window.addEventListener('keydown', onKey, true);
+        return () => window.removeEventListener('keydown', onKey, true);
+    }, []);
+    return (
+        <div
+            className='fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-6 backdrop-blur-sm'
+            onPointerDown={(e) => e.target === e.currentTarget && dismissable && onClose()}
+            {...rest}
+        >
+            <div className={cx('max-h-full w-full overflow-hidden rounded-2xl border border-line bg-panel shadow-panel', className)} role='dialog' aria-modal>
+                {children}
+            </div>
+        </div>
+    );
+}
+
+/** A thin progress bar, 0 to 1, with an optional percentage. */
+export function ProgressBar({ value, showValue = true }: { value: number; showValue?: boolean }) {
+    const percent = Math.round(Math.min(1, Math.max(0, value)) * 100);
+    return (
+        <div className='flex items-center gap-2'>
+            <div className='h-1.5 flex-1 overflow-hidden rounded-full bg-line'>
+                <div className='h-full rounded-full bg-accent transition-[width] duration-300' style={{ width: `${percent}%` }} />
+            </div>
+            {showValue && <span className='w-9 text-right font-mono text-xs text-muted'>{percent}%</span>}
         </div>
     );
 }

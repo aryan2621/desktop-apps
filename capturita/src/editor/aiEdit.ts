@@ -3,7 +3,7 @@
 // model than reasoning in seconds); this file turns its answer into exact times and edits.
 import { invoke } from '@tauri-apps/api/core';
 import type { CursorData, Project } from '../lib/api';
-import { cutSource, newId, speedSource, type Caption, type CaptionWord, type Edit, type TextOverlay, type Zoom } from './model';
+import { cutSource, newId, speedSource, ZOOM_HOLD, ZOOM_LEAD_IN, type Caption, type CaptionWord, type Edit, type TextOverlay, type Zoom } from './model';
 
 /** One proposed edit, shown with a checkbox before it's applied. Times are source times. */
 export interface Proposal {
@@ -23,9 +23,6 @@ export interface AiResult {
 
 /** A silence longer than this becomes its own "(no speech)" line, so it can be cut or sped up. */
 const SILENCE_LINE = 2.5;
-/** Zooms the model places on a single click are widened to this much before and after it. */
-const ZOOM_BEFORE = 0.8;
-const ZOOM_AFTER = 1.6;
 
 const SYSTEM = `You edit screen recordings. You get the recording's transcript as numbered lines (#n [start-end] text, times in seconds; "(no speech)" lines are silent stretches), the times the user clicked, and a request.
 First write a short plan: which lines the request is about (read every line; related lines next to each other usually belong together).
@@ -103,8 +100,8 @@ export function toProposals(actions: RawAction[], lines: { start: number; end: n
             let start = Math.max(0, Math.min(action.start, action.end));
             let end = Math.min(duration, Math.max(action.start, action.end));
             if (end - start < 1) {
-                start = Math.max(0, start - ZOOM_BEFORE);
-                end = Math.min(duration, end + ZOOM_AFTER);
+                start = Math.max(0, start - ZOOM_LEAD_IN);
+                end = Math.min(duration, end + ZOOM_HOLD);
             }
             if (end > start) out.push({ id: newId(), type: 'zoom', start, end, reason });
             continue;

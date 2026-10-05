@@ -1,12 +1,12 @@
 import { useEffect, useRef, useState, type ReactNode } from 'react';
 import { listen } from '@tauri-apps/api/event';
 import { openUrl, revealItemInDir } from '@tauri-apps/plugin-opener';
-import { CheckCircle2, Cloud, Copy, Download, ExternalLink, FileVideo, FolderOpen, KeyRound, Loader2, LogOut, RotateCw, SquarePlay, X } from 'lucide-react';
+import { ArrowLeft, CheckCircle2, ChevronDown, Clipboard, Cloud, Copy, Download, ExternalLink, FileVideo, FolderOpen, KeyRound, Loader2, LogOut, RotateCw, SquarePlay, X } from 'lucide-react';
 import { toast } from 'sonner';
 import { api, errorMessage, formatDuration, GOOGLE_SCOPES, type CursorData, type Destination, type GoogleStatus, type Privacy, type Project } from '../lib/api';
-import { Button, cx } from '../components/ui';
-import { SettingsDialog } from '../components/SettingsDialog';
-import { defaultExportName, ExportCancelled, exportSize, exportVideo, type ExportProgress, type ExportSettings, type Resolution } from './export';
+import { Button, Modal, ProgressBar, Segmented, cx } from '../components/ui';
+import { GoogleSection } from '../components/SettingsDialog';
+import { defaultExportName, ExportCancelled, exportSize, exportVideo, type ExportProgress, type ExportSettings, type Quality, type Resolution } from './export';
 import { totalDuration, type Edit } from './model';
 
 const SETTINGS_KEY = 'capturita.export';
@@ -22,10 +22,28 @@ interface Remembered extends ExportSettings {
 const YOUTUBE_STUDIO = 'https://studio.youtube.com/';
 
 const RESOLUTIONS: { value: Resolution; label: string }[] = [
+    { value: 480, label: '480p' },
     { value: 720, label: '720p' },
     { value: 1080, label: '1080p' },
     { value: 2160, label: '4K' },
 ];
+
+type PresetId = 'studio' | 'web' | 'social' | 'small' | 'gif';
+/** One-click export settings, like Screen Studio's presets. */
+const PRESETS: { id: PresetId; label: string; hint: string; settings: ExportSettings }[] = [
+    { id: 'web', label: 'Web', hint: '1080p · 30 fps · good for docs, Slack and the web', settings: { format: 'mp4', resolution: 1080, fps: 30, quality: 'high' } },
+    { id: 'studio', label: 'Studio', hint: '4K · 60 fps · highest quality, big file', settings: { format: 'mp4', resolution: 2160, fps: 60, quality: 'studio' } },
+    { id: 'social', label: 'Social', hint: '1080p · 60 fps · smooth for social posts', settings: { format: 'mp4', resolution: 1080, fps: 60, quality: 'high' } },
+    { id: 'small', label: 'Small', hint: '720p · 30 fps · smallest MP4', settings: { format: 'mp4', resolution: 720, fps: 30, quality: 'medium' } },
+    { id: 'gif', label: 'GIF', hint: '480p · 15 fps · silent, loops; best under a minute', settings: { format: 'gif', resolution: 480, fps: 15, quality: 'high' } },
+];
+const QUALITIES: { value: Quality; label: string; hint: string }[] = [
+    { value: 'small', label: 'Low', hint: 'Smallest file' },
+    { value: 'medium', label: 'Medium', hint: 'Balanced' },
+    { value: 'high', label: 'High', hint: 'Sharp text, reasonable size' },
+    { value: 'studio', label: 'Best', hint: 'Highest bitrate' },
+];
+const samePreset = (a: ExportSettings, b: ExportSettings) => a.format === b.format && a.resolution === b.resolution && a.fps === b.fps && a.quality === b.quality;
 const TARGETS: { value: Target; label: string; hint: string; icon: ReactNode }[] = [
     { value: 'file', label: 'File', hint: 'Save an MP4 on this Mac', icon: <FileVideo className='h-4 w-4' /> },
     { value: 'youtube', label: 'YouTube', hint: 'Export, then upload to your YouTube channel', icon: <SquarePlay className='h-4 w-4' /> },
@@ -43,7 +61,7 @@ const PHASES: Record<ExportProgress['phase'], string> = {
 };
 
 function loadSettings(): Remembered {
-    const defaults: Remembered = { resolution: 1080, fps: 30, target: 'file', privacy: 'private', youtubeAudited: false };
+    const defaults: Remembered = { ...PRESETS[0].settings, target: 'file', privacy: 'private', youtubeAudited: false };
     try {
         return { ...defaults, ...JSON.parse(localStorage.getItem(SETTINGS_KEY) ?? '{}') };
     } catch {
@@ -63,7 +81,8 @@ export function ExportDialog({ project, edit, cursor, onClose }: { project: Proj
     const [settings, setSettings] = useState<Remembered>(loadSettings);
     const [state, setState] = useState<State>({ status: 'idle' });
     const [google, setGoogle] = useState<GoogleStatus | null>(null);
-    const [googleSettings, setGoogleSettings] = useState(false);
+    const [connecting, setConnecting] = useState(false);
+    const [advanced, setAdvanced] = useState(false);
     const [title, setTitle] = useState(project.source.name);
     const [fileName, setFileName] = useState(() => defaultExportName(project));
     const [description, setDescription] = useState('');
@@ -71,7 +90,10 @@ export function ExportDialog({ project, edit, cursor, onClose }: { project: Proj
     const startedAt = useRef(0);
 
     const size = exportSize(edit, project, settings.resolution);
-    const uploading = settings.target !== 'file';
+    const gif = settings.format === 'gif';
+    const uploading = settings.target !== 'file' && !gif;
+    const preset = PRESETS.find((p) => samePreset(p.settings, settings))?.id ?? null;
+    const extension = gif ? '.gif' : '.mp4';
     const busy = state.status === 'exporting' || state.status === 'signing-in' || state.status === 'uploading';
     const needsSetup = uploading && google !== null && !google.configured;
 
@@ -123,7 +145,9 @@ export function ExportDialog({ project, edit, cursor, onClose }: { project: Proj
                 title: title.trim() || project.source.name,
                 description,
                 privacy: destination === 'youtube' ? settings.privacy : undefined,
+                thumbnail: destination === 'youtube' && edit.thumbnail ? `${project.path}/thumb.jpg` : undefined,
             });
+            if (result.thumbnailError) toast.warning('Uploaded, but the thumbnail wasn’t set', { description: result.thumbnailError, duration: 10000 });
             setState({
                 status: 'done',
                 path,
@@ -169,11 +193,11 @@ export function ExportDialog({ project, edit, cursor, onClose }: { project: Proj
             revealItemInDir(path).catch(() => {});
             openUrl(YOUTUBE_STUDIO).catch(() => {});
             toast.success('Exported. Upload the MP4 in YouTube Studio to publish it publicly.');
-        } else if (settings.target === 'file') {
+        } else if (settings.target === 'file' || gif) {
             setState({ status: 'done', path, seconds: (performance.now() - startedAt.current) / 1000 });
             toast.success('Export finished');
         } else {
-            await upload(path, settings.target);
+            await upload(path, settings.target as Destination);
         }
     };
 
@@ -192,10 +216,51 @@ export function ExportDialog({ project, edit, cursor, onClose }: { project: Proj
         if (!busy) onClose();
     };
 
+    const copyFile = (path: string) =>
+        api
+            .copyFileToClipboard(path)
+            .then(() => toast.success(`${gif ? 'GIF' : 'Video'} copied — paste it anywhere`))
+            .catch((error) => toast.error(errorMessage(error)));
+
+    if (connecting) {
+        return (
+            <Modal onClose={() => setConnecting(false)} className='flex max-h-[640px] max-w-lg flex-col'>
+                <div className='flex items-center gap-2 border-b border-line px-4 py-3'>
+                    <Button
+                        size='icon-sm'
+                        variant='ghost'
+                        onClick={() => {
+                            setConnecting(false);
+                            refreshGoogle();
+                        }}
+                        title='Back to export'
+                        aria-label='Back to export'
+                    >
+                        <ArrowLeft className='h-4 w-4' />
+                    </Button>
+                    <h2 className='text-sm font-medium'>Connect Google</h2>
+                </div>
+                <div className='min-h-0 flex-1 overflow-y-auto p-6'>
+                    <GoogleSection />
+                </div>
+                <div className='flex justify-end border-t border-line px-4 py-3'>
+                    <Button
+                        variant='primary'
+                        onClick={() => {
+                            setConnecting(false);
+                            refreshGoogle();
+                        }}
+                    >
+                        Done
+                    </Button>
+                </div>
+            </Modal>
+        );
+    }
+
     return (
-        <>
-            <div className='fixed inset-0 z-50 flex items-center justify-center bg-black/70 p-6 backdrop-blur-sm' onClick={close} data-export-busy={busy || undefined}>
-                <div className='w-full max-w-md space-y-5 rounded-2xl border border-line bg-panel p-6 shadow-panel' onClick={(e) => e.stopPropagation()}>
+        <Modal onClose={close} dismissable={!busy} className='max-w-md' data-export-busy={busy || undefined}>
+                <div className='max-h-[85vh] space-y-5 overflow-y-auto p-6'>
                     <div className='flex items-center justify-between'>
                         <h2 className='flex items-center gap-2 font-serif text-lg font-medium'>
                             <Download className='h-4 w-4' /> Export
@@ -213,11 +278,12 @@ export function ExportDialog({ project, edit, cursor, onClose }: { project: Proj
                                         <button
                                             key={target.value}
                                             onClick={() => update({ target: target.value })}
+                                            disabled={gif && target.value !== 'file'}
                                             className={cx(
-                                                'flex h-9 items-center justify-center gap-1.5 rounded-md text-sm',
-                                                settings.target === target.value ? 'bg-accent text-white' : 'text-muted hover:text-fg'
+                                                'flex h-9 items-center justify-center gap-1.5 rounded-md text-sm disabled:opacity-40',
+                                                (gif ? 'file' : settings.target) === target.value ? 'bg-accent text-white' : 'text-muted hover:text-fg'
                                             )}
-                                            title={target.hint}
+                                            title={gif && target.value !== 'file' ? 'GIFs are saved as files' : target.hint}
                                         >
                                             {target.icon}
                                             {target.label}
@@ -238,29 +304,72 @@ export function ExportDialog({ project, edit, cursor, onClose }: { project: Proj
                                         title='Saved in ~/Movies/Capturita/Exports. If the name is taken, a number is added.'
                                         spellCheck={false}
                                     />
-                                    <span className='pr-3 font-mono text-xs text-muted'>.mp4</span>
+                                    <span className='pr-3 font-mono text-xs text-muted'>{extension}</span>
                                 </div>
                             </Group>
 
-                            <div className='grid grid-cols-2 gap-3'>
-                                <Group label='Resolution'>
-                                    <Segment
-                                        value={settings.resolution}
-                                        options={RESOLUTIONS.map((r) => ({ value: r.value, label: r.label, hint: `Export at ${r.label}` }))}
-                                        onChange={(resolution) => update({ resolution })}
-                                    />
-                                </Group>
-                                <Group label='Frame rate'>
-                                    <Segment
-                                        value={settings.fps}
-                                        options={[
-                                            { value: 30 as const, label: '30', hint: 'Smaller file, fine for most screen recordings' },
-                                            { value: 60 as const, label: '60', hint: 'Smoother motion, bigger file' },
-                                        ]}
-                                        onChange={(fps) => update({ fps })}
-                                    />
-                                </Group>
-                            </div>
+                            <Group label='Preset'>
+                                <div className='grid grid-cols-5 gap-1.5'>
+                                    {PRESETS.map((p) => (
+                                        <button
+                                            key={p.id}
+                                            onClick={() => update(p.settings)}
+                                            className={cx(
+                                                'flex h-14 flex-col items-center justify-center gap-0.5 rounded-lg border text-xs transition-colors',
+                                                preset === p.id ? 'border-accent bg-accent/10 text-fg' : 'border-line bg-panel-2 text-muted hover:border-line-strong hover:text-fg'
+                                            )}
+                                            title={p.hint}
+                                        >
+                                            <span className='text-sm font-medium'>{p.label}</span>
+                                            <span className='font-mono text-[10px] text-subtle'>
+                                                {p.settings.resolution === 2160 ? '4K' : `${p.settings.resolution}p`}
+                                                {p.settings.fps}
+                                            </span>
+                                        </button>
+                                    ))}
+                                </div>
+                                <button className='flex items-center gap-1 text-xs text-muted hover:text-fg' onClick={() => setAdvanced((a) => !a)} aria-expanded={advanced}>
+                                    <ChevronDown className={cx('h-3.5 w-3.5 transition-transform', advanced && 'rotate-180')} />
+                                    {preset ? 'Customize' : 'Custom settings'}
+                                </button>
+                            </Group>
+
+                            {(advanced || !preset) && (
+                                <div className='space-y-3 rounded-lg border border-line p-3'>
+                                    <Group label='Format'>
+                                        <Segmented
+                                            size='sm'
+                                            value={settings.format}
+                                            onChange={(format) => update(format === 'gif' ? { format, fps: 15, resolution: Math.min(settings.resolution, 720) as Resolution } : { format, fps: settings.fps === 15 ? 30 : settings.fps })}
+                                            options={[
+                                                { value: 'mp4', label: 'MP4', hint: 'Video with sound' },
+                                                { value: 'gif', label: 'GIF', hint: 'Silent, loops, plays anywhere' },
+                                            ]}
+                                        />
+                                    </Group>
+                                    <Group label='Resolution'>
+                                        <Segmented
+                                            size='sm'
+                                            value={settings.resolution}
+                                            onChange={(resolution) => update({ resolution })}
+                                            options={RESOLUTIONS.filter((r) => !gif || r.value <= 720).map((r) => ({ value: r.value, label: r.label, hint: `Export at ${r.label}` }))}
+                                        />
+                                    </Group>
+                                    <Group label='Frame rate'>
+                                        <Segmented
+                                            size='sm'
+                                            value={settings.fps}
+                                            onChange={(fps) => update({ fps })}
+                                            options={(gif ? ([10, 15, 24] as const) : ([24, 30, 60] as const)).map((fps) => ({ value: fps as ExportSettings['fps'], label: `${fps} fps` }))}
+                                        />
+                                    </Group>
+                                    {!gif && (
+                                        <Group label='Quality'>
+                                            <Segmented size='sm' value={settings.quality} onChange={(quality) => update({ quality })} options={QUALITIES} />
+                                        </Group>
+                                    )}
+                                </div>
+                            )}
 
                             {uploading && (
                                 <div className='space-y-3'>
@@ -270,7 +379,7 @@ export function ExportDialog({ project, edit, cursor, onClose }: { project: Proj
                                             <p className='text-muted'>
                                                 Uploads use your own Google Cloud project. Add its Client ID and Client Secret in Settings; it takes a few minutes, once.
                                             </p>
-                                            <Button size='sm' onClick={() => setGoogleSettings(true)}>
+                                            <Button size='sm' onClick={() => setConnecting(true)}>
                                                 <KeyRound className='h-3.5 w-3.5' /> Set up Google
                                             </Button>
                                         </div>
@@ -305,7 +414,7 @@ export function ExportDialog({ project, edit, cursor, onClose }: { project: Proj
                                     />
                                     {settings.target === 'youtube' && (
                                         <Group label='Visibility'>
-                                            <Segment value={settings.privacy} options={PRIVACY.map((p) => ({ ...p, hint: `${p.label} on YouTube` }))} onChange={(privacy) => update({ privacy })} />
+                                            <Segmented size='sm' value={settings.privacy} options={PRIVACY.map((p) => ({ ...p, hint: `${p.label} on YouTube` }))} onChange={(privacy: Privacy) => update({ privacy })} />
                                             {settings.privacy !== 'private' && !settings.youtubeAudited ? (
                                                 <div className='space-y-2 rounded-lg border border-warning/30 bg-warning-soft p-3 text-xs'>
                                                     <p className='text-warning-fg'>
@@ -332,11 +441,12 @@ export function ExportDialog({ project, edit, cursor, onClose }: { project: Proj
                             )}
 
                             <p className='text-xs text-muted'>
-                                {size.width} × {size.height} · {formatDuration(totalDuration(edit.clips))} · saved to Movies › Capturita › Exports
+                                {gif ? 'GIF' : 'MP4'} · {size.width} × {size.height} · {settings.fps} fps · {formatDuration(totalDuration(edit.clips))}
+                                {gif && totalDuration(edit.clips) > 60 ? ' · long GIFs get very large' : ''} · saved to Movies › Capturita › Exports
                             </p>
                             {state.status === 'error' && <p className='rounded-lg bg-danger-soft p-3 text-xs text-danger-fg'>Export failed: {state.message}</p>}
                             <Button variant='primary' className='w-full' onClick={() => start()} disabled={needsSetup} title={needsSetup ? 'Connect Google first' : undefined}>
-                                <Download className='h-4 w-4' /> {uploading ? 'Export & upload' : 'Export'}
+                                <Download className='h-4 w-4' /> {uploading ? 'Export & upload' : gif ? 'Export GIF' : 'Export'}
                             </Button>
                         </>
                     )}
@@ -417,7 +527,10 @@ export function ExportDialog({ project, edit, cursor, onClose }: { project: Proj
                                         </Button>
                                     </>
                                 )}
-                                <Button size='icon' variant='secondary' onClick={() => revealItemInDir(state.path)} title='Show the MP4 in Finder' aria-label='Show in Finder'>
+                                <Button variant='secondary' onClick={() => copyFile(state.path)} title='Copy the file, then paste it into Slack, Mail or Finder'>
+                                    <Clipboard className='h-4 w-4' /> Copy
+                                </Button>
+                                <Button size='icon' variant='secondary' onClick={() => revealItemInDir(state.path)} title='Show in Finder' aria-label='Show in Finder'>
                                     <FolderOpen className='h-4 w-4' />
                                 </Button>
                                 <Button size='icon' variant='ghost' onClick={() => setState({ status: 'idle' })} title='Export again with other settings' aria-label='Export again'>
@@ -427,17 +540,7 @@ export function ExportDialog({ project, edit, cursor, onClose }: { project: Proj
                         </div>
                     )}
                 </div>
-            </div>
-            {googleSettings && (
-                <SettingsDialog
-                    initialSection='google'
-                    onClose={() => {
-                        setGoogleSettings(false);
-                        refreshGoogle();
-                    }}
-                />
-            )}
-        </>
+        </Modal>
     );
 }
 
@@ -450,39 +553,17 @@ function Group({ label, children }: { label: string; children: ReactNode }) {
     );
 }
 
-function Segment<T extends string | number>({ value, options, onChange }: { value: T; options: { value: T; label: string; hint: string }[]; onChange: (value: T) => void }) {
-    return (
-        <div className='grid gap-1 rounded-lg bg-panel-2 p-1' style={{ gridTemplateColumns: `repeat(${options.length}, 1fr)` }}>
-            {options.map((option) => (
-                <button
-                    key={option.value}
-                    onClick={() => onChange(option.value)}
-                    className={cx('h-8 rounded-md text-sm', value === option.value ? 'bg-accent text-white' : 'text-muted hover:text-fg')}
-                    title={option.hint}
-                >
-                    {option.label}
-                </button>
-            ))}
-        </div>
-    );
-}
-
 function Progress({ label, value, onCancel, cancelLabel }: { label: string; value: number; onCancel: () => void; cancelLabel: string }) {
     return (
         <div className='space-y-3'>
-            <div className='flex items-center justify-between gap-3 text-sm'>
-                <span className='flex min-w-0 items-center gap-2'>
-                    <Loader2 className='h-4 w-4 shrink-0 animate-spin' />
-                    <span className='truncate'>{label}</span>
-                </span>
-                <span className='font-mono text-muted'>{Math.round(value * 100)}%</span>
+            <div className='flex items-center gap-2 text-sm'>
+                <Loader2 className='h-4 w-4 shrink-0 animate-spin' />
+                <span className='truncate'>{label}</span>
             </div>
-            <div className='h-2 overflow-hidden rounded-full bg-panel-2'>
-                <div className='h-full rounded-full bg-accent transition-[width]' style={{ width: `${value * 100}%` }} />
-            </div>
+            <ProgressBar value={value} />
             <div className='flex justify-end'>
-                <Button size='icon' variant='ghost' className='h-8 w-8' onClick={onCancel} title={cancelLabel} aria-label={cancelLabel}>
-                    <X className='h-4 w-4' />
+                <Button size='sm' variant='ghost' onClick={onCancel} title={cancelLabel}>
+                    <X className='h-3.5 w-3.5' /> Cancel
                 </Button>
             </div>
         </div>

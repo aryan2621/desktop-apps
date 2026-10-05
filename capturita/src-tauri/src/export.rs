@@ -16,9 +16,13 @@ pub struct Export {
     file: Mutex<Option<(PathBuf, File)>>,
 }
 
-/// Starts a new export file in ~/Movies/Capturita/Exports and returns its path.
+/// Starts a new export file (`mp4` or `gif`) in ~/Movies/Capturita/Exports and returns its path.
 #[tauri::command]
-pub fn export_open(app: AppHandle, export: State<'_, Export>, name: String) -> Result<String, String> {
+pub fn export_open(app: AppHandle, export: State<'_, Export>, name: String, ext: Option<String>) -> Result<String, String> {
+    let ext = match ext.as_deref() {
+        Some("gif") => "gif",
+        _ => "mp4",
+    };
     let dir = recordings_root(&app)?.join("Exports");
     std::fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
     // Keep only characters that are safe in a file name.
@@ -30,10 +34,10 @@ pub fn export_open(app: AppHandle, export: State<'_, Export>, name: String) -> R
         .trim_start_matches('.')
         .to_string();
     let stem = if stem.is_empty() { "Capturita export".to_string() } else { stem };
-    let mut path = dir.join(format!("{stem}.mp4"));
+    let mut path = dir.join(format!("{stem}.{ext}"));
     let mut n = 2;
     while path.exists() {
-        path = dir.join(format!("{stem} {n}.mp4"));
+        path = dir.join(format!("{stem} {n}.{ext}"));
         n += 1;
     }
     let file = File::create(&path).map_err(|e| e.to_string())?;
@@ -71,4 +75,28 @@ pub fn export_close(export: State<'_, Export>, keep: bool) -> Result<(), String>
         let _ = std::fs::remove_file(path);
     }
     Ok(())
+}
+
+/// Puts the exported file on the clipboard as a file (like ⌘C in Finder), so it can be pasted
+/// into Slack, Mail, Messages or a Finder window.
+#[tauri::command]
+pub fn copy_file_to_clipboard(app: AppHandle, path: String) -> Result<(), String> {
+    let only_exports = || "Only exported files can be copied".to_string();
+    let exports = std::fs::canonicalize(recordings_root(&app)?.join("Exports")).map_err(|_| only_exports())?;
+    let file = std::fs::canonicalize(&path).map_err(|_| only_exports())?;
+    if !file.starts_with(&exports) || !file.is_file() {
+        return Err(only_exports());
+    }
+    let path = file.to_string_lossy().into_owned();
+    // AppleScript string literal: escape backslashes and quotes.
+    let quoted = path.replace('\\', "\\\\").replace('"', "\\\"");
+    let status = std::process::Command::new("osascript")
+        .args(["-e", &format!("set the clipboard to (POSIX file \"{quoted}\")")])
+        .status()
+        .map_err(|e| e.to_string())?;
+    if status.success() {
+        Ok(())
+    } else {
+        Err("Could not copy the file to the clipboard".into())
+    }
 }
