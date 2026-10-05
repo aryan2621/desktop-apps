@@ -1,18 +1,28 @@
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState, type ReactNode } from 'react';
 import { listen } from '@tauri-apps/api/event';
 import { getCurrentWindow } from '@tauri-apps/api/window';
 import { openPath } from '@tauri-apps/plugin-opener';
-import { FolderOpen, ListChecks } from 'lucide-react';
+import { FolderOpen, LayoutGrid, List, MousePointerClick, Plus, Settings } from 'lucide-react';
 import { toast } from 'sonner';
 import { api, errorMessage, type Permissions, type Project } from '../lib/api';
 import { PermissionsBanner } from '../components/PermissionsBanner';
 import { SetupFlow } from '../components/SetupFlow';
 import { resumeStep, setResumeStep, setupDone, type SetupStep } from '../lib/setup';
 import { RecorderPanel } from '../components/RecorderPanel';
-import { LibraryHeader, RecordingsList } from '../components/RecordingsList';
+import { EmptyLibrary, LibraryHeader, RecordingDetails, RecordingsList, type LibraryView } from '../components/RecordingsList';
 import { EditorView } from './EditorView';
-import { IconButton } from '../components/ui';
-import { ThemeToggle } from '../components/ThemeToggle';
+import { Button, IconButton, Segmented } from '../components/ui';
+import { SettingsDialog } from '../components/SettingsDialog';
+
+const VIEW_KEY = 'capturita.library.view';
+
+function loadView(): LibraryView {
+    try {
+        return localStorage.getItem(VIEW_KEY) === 'table' ? 'table' : 'cards';
+    } catch {
+        return 'cards';
+    }
+}
 
 export function MainWindow() {
     const [permissions, setPermissions] = useState<Permissions | null>(null);
@@ -23,6 +33,19 @@ export function MainWindow() {
     useEffect(() => {
         if (setup) setResumeStep(null);
     }, [setup]);
+    const [settingsOpen, setSettingsOpen] = useState(false);
+    const [recorderOpen, setRecorderOpen] = useState(false);
+    const [view, setView] = useState<LibraryView>(loadView);
+    const [selectedId, setSelectedId] = useState<string | null>(null);
+    const selected = recordings.find((r) => r.id === selectedId) ?? recordings[0] ?? null;
+    const changeView = (next: LibraryView) => {
+        setView(next);
+        try {
+            localStorage.setItem(VIEW_KEY, next);
+        } catch {
+            // The view just won't be remembered.
+        }
+    };
     // The main window is hidden while recording, so recorder warnings are shown once it ends.
     const pendingWarnings = useRef<string[]>([]);
 
@@ -47,6 +70,8 @@ export function MainWindow() {
                 if (payload.event === 'warning' && payload.data?.message) pendingWarnings.current.push(payload.data.message);
             }),
             listen<Project>('recording-finished', (event) => {
+                setRecorderOpen(false);
+                setSelectedId(event.payload.id);
                 toast.success('Recording saved');
                 pendingWarnings.current.splice(0).forEach((message) => toast.warning(message));
                 refreshRecordings();
@@ -64,8 +89,28 @@ export function MainWindow() {
         };
     }, [refreshPermissions, refreshRecordings]);
 
+    // Always mounted, only hidden (also under the editor): it owns the recording settings and answers ⌘⇧R.
+    const recorder = (
+        <RecorderDialog open={recorderOpen} onClose={() => setRecorderOpen(false)}>
+            <RecorderPanel
+                permissions={permissions}
+                onPermissionsChange={setPermissions}
+                visible={recorderOpen}
+                onStarted={() => setRecorderOpen(false)}
+                onNotReady={() => {
+                    // ⌘⇧R from another app: bring Capturita forward so the missing choice can be made.
+                    setRecorderOpen(true);
+                    const window = getCurrentWindow();
+                    window.unminimize().then(() => window.show()).then(() => window.setFocus()).catch(() => {});
+                }}
+                onClose={() => setRecorderOpen(false)}
+            />
+        </RecorderDialog>
+    );
+
     if (editing) {
         return (
+            <>
             <EditorView
                 // A fresh editor per project: no state (edit, music, dialogs) carries over when a
                 // new recording opens while another project is being edited.
@@ -76,10 +121,14 @@ export function MainWindow() {
                     refreshRecordings();
                 }}
             />
+            {recorder}
+            </>
         );
     }
 
+    // Same shape as the editor branch ([page, recorder]), so the recorder keeps its state when the editor opens or closes.
     return (
+        <>
         <div className='flex h-full flex-col'>
             <header className='flex h-14 shrink-0 items-center gap-3 border-b border-line bg-panel px-5'>
                 <span className='flex h-7 w-7 items-center justify-center rounded-lg bg-accent shadow-sm'>
@@ -87,28 +136,90 @@ export function MainWindow() {
                 </span>
                 <span className='font-serif text-[17px] font-medium tracking-tight'>Capturita</span>
                 <div className='ml-auto flex items-center gap-2'>
-                    <IconButton label='Setup: permissions and caption model' onClick={() => setSetup('welcome')}>
-                        <ListChecks className='h-4 w-4' />
-                    </IconButton>
-                    <ThemeToggle />
+                    <Button variant='primary' size='sm' onClick={() => setRecorderOpen(true)} title='New recording (or press ⌘⇧R anywhere)'>
+                        <Plus className='h-4 w-4' /> New recording
+                    </Button>
                     <IconButton label='Open the recordings folder' onClick={async () => openPath(await api.recordingsDir())}>
                         <FolderOpen className='h-4 w-4' />
+                    </IconButton>
+                    <IconButton label='Settings' onClick={() => setSettingsOpen(true)}>
+                        <Settings className='h-4 w-4' />
                     </IconButton>
                 </div>
             </header>
 
-            <main className='flex min-h-0 flex-1 gap-6 p-6'>
-                <div className='flex w-[420px] shrink-0 flex-col gap-4'>
-                    {permissions && <PermissionsBanner permissions={permissions} onChange={setPermissions} />}
-                    <RecorderPanel permissions={permissions} onPermissionsChange={setPermissions} />
-                </div>
-                <section className='flex min-w-0 flex-1 flex-col gap-4 overflow-y-auto'>
-                    <LibraryHeader recordings={recordings} />
-                    <RecordingsList recordings={recordings} onOpen={setEditing} onDeleted={refreshRecordings} />
-                </section>
+            <main className='flex min-h-0 flex-1 flex-col gap-4 p-6'>
+                {permissions && <PermissionsBanner permissions={permissions} onChange={setPermissions} />}
+                {recordings.length === 0 ? (
+                    <section className='flex min-h-0 flex-1 flex-col gap-4 overflow-y-auto'>
+                        <LibraryHeader recordings={recordings} />
+                        <EmptyLibrary onNew={() => setRecorderOpen(true)} />
+                    </section>
+                ) : (
+                    <div className='flex min-h-0 flex-1 gap-6'>
+                        <section className='flex min-w-0 flex-1 flex-col gap-4 overflow-y-auto pr-1'>
+                            <div className='flex flex-wrap items-end justify-between gap-3'>
+                                <LibraryHeader recordings={recordings} />
+                                <div className='w-[92px]'>
+                                    <Segmented<LibraryView>
+                                        size='sm'
+                                        value={view}
+                                        onChange={changeView}
+                                        options={[
+                                            { value: 'cards', icon: <LayoutGrid className='h-3.5 w-3.5' />, hint: 'Show as cards' },
+                                            { value: 'table', icon: <List className='h-3.5 w-3.5' />, hint: 'Show as a table' },
+                                        ]}
+                                    />
+                                </div>
+                            </div>
+                            <RecordingsList recordings={recordings} view={view} selectedId={selected?.id ?? null} onSelect={(p) => setSelectedId(p.id)} onOpen={setEditing} />
+                        </section>
+                        <aside className='w-[360px] shrink-0'>
+                            {selected ? (
+                                <RecordingDetails key={selected.id} project={selected} onOpen={() => setEditing(selected)} onDeleted={refreshRecordings} />
+                            ) : (
+                                <div className='flex h-full flex-col items-center justify-center gap-2 rounded-2xl border border-dashed border-line text-sm text-muted'>
+                                    <MousePointerClick className='h-5 w-5' />
+                                    Select a recording to see its details
+                                </div>
+                            )}
+                        </aside>
+                    </div>
+                )}
             </main>
 
+            {settingsOpen && (
+                <SettingsDialog
+                    onClose={() => setSettingsOpen(false)}
+                    onRunSetup={() => {
+                        setSettingsOpen(false);
+                        setSetup('welcome');
+                    }}
+                />
+            )}
             {setup && <SetupFlow initialStep={setup} onClose={() => setSetup(null)} onPermissionsChange={setPermissions} />}
+        </div>
+        {recorder}
+        </>
+    );
+}
+
+function RecorderDialog({ open, onClose, children }: { open: boolean; onClose: () => void; children: ReactNode }) {
+    useEffect(() => {
+        if (!open) return;
+        // Bubble phase: an open menu inside (which handles Esc in the capture phase) closes first.
+        const onKey = (event: KeyboardEvent) => event.key === 'Escape' && onClose();
+        document.addEventListener('keydown', onKey);
+        return () => document.removeEventListener('keydown', onKey);
+    }, [open, onClose]);
+
+    return (
+        <div
+            data-recorder-open={open || undefined}
+            className={open ? 'fixed inset-0 z-40 flex items-center justify-center bg-black/60 p-6 backdrop-blur-sm' : 'hidden'}
+            onPointerDown={(e) => e.target === e.currentTarget && onClose()}
+        >
+            <div className='flex h-[min(720px,100%)] w-full max-w-[960px] flex-col'>{children}</div>
         </div>
     );
 }

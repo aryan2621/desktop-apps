@@ -1,11 +1,12 @@
 import { useEffect, useRef, useState, type ReactNode } from 'react';
 import { listen } from '@tauri-apps/api/event';
 import { openUrl, revealItemInDir } from '@tauri-apps/plugin-opener';
-import { CheckCircle2, Cloud, Copy, Download, ExternalLink, FileVideo, FolderOpen, Loader2, LogOut, RefreshCw, RotateCw, SquarePlay, X } from 'lucide-react';
+import { CheckCircle2, Cloud, Copy, Download, ExternalLink, FileVideo, FolderOpen, KeyRound, Loader2, LogOut, RotateCw, SquarePlay, X } from 'lucide-react';
 import { toast } from 'sonner';
 import { api, errorMessage, formatDuration, GOOGLE_SCOPES, type CursorData, type Destination, type GoogleStatus, type Privacy, type Project } from '../lib/api';
 import { Button, cx } from '../components/ui';
-import { ExportCancelled, exportSize, exportVideo, type ExportProgress, type ExportSettings, type Resolution } from './export';
+import { SettingsDialog } from '../components/SettingsDialog';
+import { defaultExportName, ExportCancelled, exportSize, exportVideo, type ExportProgress, type ExportSettings, type Resolution } from './export';
 import { totalDuration, type Edit } from './model';
 
 const SETTINGS_KEY = 'capturita.export';
@@ -62,7 +63,9 @@ export function ExportDialog({ project, edit, cursor, onClose }: { project: Proj
     const [settings, setSettings] = useState<Remembered>(loadSettings);
     const [state, setState] = useState<State>({ status: 'idle' });
     const [google, setGoogle] = useState<GoogleStatus | null>(null);
+    const [googleSettings, setGoogleSettings] = useState(false);
     const [title, setTitle] = useState(project.source.name);
+    const [fileName, setFileName] = useState(() => defaultExportName(project));
     const [description, setDescription] = useState('');
     const abortRef = useRef<AbortController | null>(null);
     const startedAt = useRef(0);
@@ -151,6 +154,7 @@ export function ExportDialog({ project, edit, cursor, onClose }: { project: Proj
                 edit,
                 cursor,
                 settings,
+                fileName,
                 signal: controller.signal,
                 onProgress: (progress) => setState({ status: 'exporting', progress }),
             });
@@ -189,231 +193,251 @@ export function ExportDialog({ project, edit, cursor, onClose }: { project: Proj
     };
 
     return (
-        <div className='fixed inset-0 z-50 flex items-center justify-center bg-black/70 p-6 backdrop-blur-sm' onClick={close}>
-            <div className='w-full max-w-md space-y-5 rounded-2xl border border-line bg-panel p-6 shadow-panel' onClick={(e) => e.stopPropagation()}>
-                <div className='flex items-center justify-between'>
-                    <h2 className='flex items-center gap-2 font-serif text-lg font-medium'>
-                        <Download className='h-4 w-4' /> Export
-                    </h2>
-                    <Button size='icon' variant='ghost' className='h-8 w-8' onClick={close} disabled={busy} title='Close' aria-label='Close'>
-                        <X className='h-4 w-4' />
-                    </Button>
-                </div>
+        <>
+            <div className='fixed inset-0 z-50 flex items-center justify-center bg-black/70 p-6 backdrop-blur-sm' onClick={close} data-export-busy={busy || undefined}>
+                <div className='w-full max-w-md space-y-5 rounded-2xl border border-line bg-panel p-6 shadow-panel' onClick={(e) => e.stopPropagation()}>
+                    <div className='flex items-center justify-between'>
+                        <h2 className='flex items-center gap-2 font-serif text-lg font-medium'>
+                            <Download className='h-4 w-4' /> Export
+                        </h2>
+                        <Button size='icon' variant='ghost' className='h-8 w-8' onClick={close} disabled={busy} title='Close' aria-label='Close'>
+                            <X className='h-4 w-4' />
+                        </Button>
+                    </div>
 
-                {(state.status === 'idle' || (state.status === 'error' && !state.path)) && (
-                    <>
-                        <Group label='Save to'>
-                            <div className='grid grid-cols-3 gap-1 rounded-lg bg-panel-2 p-1'>
-                                {TARGETS.map((target) => (
-                                    <button
-                                        key={target.value}
-                                        onClick={() => update({ target: target.value })}
-                                        className={cx(
-                                            'flex h-9 items-center justify-center gap-1.5 rounded-md text-sm',
-                                            settings.target === target.value ? 'bg-accent text-white' : 'text-muted hover:text-fg'
-                                        )}
-                                        title={target.hint}
-                                    >
-                                        {target.icon}
-                                        {target.label}
-                                    </button>
-                                ))}
+                    {(state.status === 'idle' || (state.status === 'error' && !state.path)) && (
+                        <>
+                            <Group label='Save to'>
+                                <div className='grid grid-cols-3 gap-1 rounded-lg bg-panel-2 p-1'>
+                                    {TARGETS.map((target) => (
+                                        <button
+                                            key={target.value}
+                                            onClick={() => update({ target: target.value })}
+                                            className={cx(
+                                                'flex h-9 items-center justify-center gap-1.5 rounded-md text-sm',
+                                                settings.target === target.value ? 'bg-accent text-white' : 'text-muted hover:text-fg'
+                                            )}
+                                            title={target.hint}
+                                        >
+                                            {target.icon}
+                                            {target.label}
+                                        </button>
+                                    ))}
+                                </div>
+                            </Group>
+
+                            <Group label='File name'>
+                                <div className='flex h-9 items-center rounded-lg border border-line bg-panel-2 focus-within:border-accent'>
+                                    <input
+                                        value={fileName}
+                                        onChange={(e) => setFileName(e.target.value)}
+                                        onFocus={(e) => e.target.select()}
+                                        placeholder={defaultExportName(project)}
+                                        className='h-full min-w-0 flex-1 bg-transparent px-3 text-sm outline-none'
+                                        aria-label='File name'
+                                        title='Saved in ~/Movies/Capturita/Exports. If the name is taken, a number is added.'
+                                        spellCheck={false}
+                                    />
+                                    <span className='pr-3 font-mono text-xs text-muted'>.mp4</span>
+                                </div>
+                            </Group>
+
+                            <div className='grid grid-cols-2 gap-3'>
+                                <Group label='Resolution'>
+                                    <Segment
+                                        value={settings.resolution}
+                                        options={RESOLUTIONS.map((r) => ({ value: r.value, label: r.label, hint: `Export at ${r.label}` }))}
+                                        onChange={(resolution) => update({ resolution })}
+                                    />
+                                </Group>
+                                <Group label='Frame rate'>
+                                    <Segment
+                                        value={settings.fps}
+                                        options={[
+                                            { value: 30 as const, label: '30', hint: 'Smaller file, fine for most screen recordings' },
+                                            { value: 60 as const, label: '60', hint: 'Smoother motion, bigger file' },
+                                        ]}
+                                        onChange={(fps) => update({ fps })}
+                                    />
+                                </Group>
                             </div>
-                        </Group>
 
-                        <div className='grid grid-cols-2 gap-3'>
-                            <Group label='Resolution'>
-                                <Segment
-                                    value={settings.resolution}
-                                    options={RESOLUTIONS.map((r) => ({ value: r.value, label: r.label, hint: `Export at ${r.label}` }))}
-                                    onChange={(resolution) => update({ resolution })}
-                                />
-                            </Group>
-                            <Group label='Frame rate'>
-                                <Segment
-                                    value={settings.fps}
-                                    options={[
-                                        { value: 30 as const, label: '30', hint: 'Smaller file, fine for most screen recordings' },
-                                        { value: 60 as const, label: '60', hint: 'Smoother motion, bigger file' },
-                                    ]}
-                                    onChange={(fps) => update({ fps })}
-                                />
-                            </Group>
-                        </div>
-
-                        {uploading && (
-                            <div className='space-y-3'>
-                                {needsSetup ? (
-                                    <div className='space-y-3 rounded-lg border border-warning/30 bg-warning-soft p-3 text-xs'>
-                                        <p className='font-medium text-warning-fg'>Connect Google first</p>
-                                        <p className='text-muted'>
-                                            Create a “Desktop app” OAuth client in your Google Cloud project (with YouTube Data API v3 and Google Drive API
-                                            enabled), download its JSON, and save it as <span className='font-mono'>google-client.json</span> in Capturita’s
-                                            config folder.
-                                        </p>
-                                        <div className='flex gap-2'>
-                                            <Button size='icon' className='h-8 w-8' onClick={() => api.googleOpenConfigFolder()} title='Open the config folder' aria-label='Open the config folder'>
-                                                <FolderOpen className='h-4 w-4' />
-                                            </Button>
-                                            <Button size='icon' variant='ghost' className='h-8 w-8' onClick={refreshGoogle} title='Check again' aria-label='Check again'>
-                                                <RefreshCw className='h-4 w-4' />
+                            {uploading && (
+                                <div className='space-y-3'>
+                                    {needsSetup ? (
+                                        <div className='space-y-3 rounded-lg border border-warning/30 bg-warning-soft p-3 text-xs'>
+                                            <p className='font-medium text-warning-fg'>Connect Google first</p>
+                                            <p className='text-muted'>
+                                                Uploads use your own Google Cloud project. Add its Client ID and Client Secret in Settings; it takes a few minutes, once.
+                                            </p>
+                                            <Button size='sm' onClick={() => setGoogleSettings(true)}>
+                                                <KeyRound className='h-3.5 w-3.5' /> Set up Google
                                             </Button>
                                         </div>
-                                    </div>
-                                ) : (
-                                    <div className='flex items-center justify-between rounded-lg bg-panel-2 px-3 py-2 text-xs'>
-                                        <span className='truncate text-muted'>
-                                            {google?.account ? `Signed in as ${google.account.email}` : 'You’ll sign in with Google in your browser when the upload starts.'}
-                                        </span>
-                                        {google?.account && (
-                                            <Button size='icon' variant='ghost' className='h-7 w-7 shrink-0' onClick={signOut} title='Sign out of Google' aria-label='Sign out of Google'>
-                                                <LogOut className='h-3.5 w-3.5' />
-                                            </Button>
-                                        )}
-                                    </div>
-                                )}
-                                <input
-                                    value={title}
-                                    onChange={(e) => setTitle(e.target.value)}
-                                    placeholder='Title'
-                                    className='h-9 w-full rounded-lg border border-line bg-panel-2 px-3 text-sm outline-none focus:border-accent'
-                                    aria-label='Title'
-                                    title='Title'
-                                />
-                                <textarea
-                                    value={description}
-                                    onChange={(e) => setDescription(e.target.value)}
-                                    placeholder='Description (optional)'
-                                    rows={2}
-                                    className='w-full resize-none rounded-lg border border-line bg-panel-2 p-2 text-sm outline-none focus:border-accent'
-                                    aria-label='Description'
-                                    title='Description'
-                                />
-                                {settings.target === 'youtube' && (
-                                    <Group label='Visibility'>
-                                        <Segment value={settings.privacy} options={PRIVACY.map((p) => ({ ...p, hint: `${p.label} on YouTube` }))} onChange={(privacy) => update({ privacy })} />
-                                        {settings.privacy !== 'private' && !settings.youtubeAudited ? (
-                                            <div className='space-y-2 rounded-lg border border-warning/30 bg-warning-soft p-3 text-xs'>
-                                                <p className='text-warning-fg'>
-                                                    Until Google audits your API project, YouTube locks videos uploaded from apps to <b>private</b>, even when you pick{' '}
-                                                    {settings.privacy}. To publish now, export the MP4 and upload it in YouTube Studio.
-                                                </p>
-                                                <div className='flex flex-wrap items-center gap-2'>
-                                                    <Button size='sm' variant='secondary' onClick={() => start('studio')} title='Export the MP4, show it in Finder and open YouTube Studio'>
-                                                        <ExternalLink className='h-3.5 w-3.5' /> Export & open YouTube Studio
-                                                    </Button>
-                                                    <Button size='sm' variant='ghost' onClick={() => update({ youtubeAudited: true })} title='Hide this note: my project passed the YouTube API audit'>
-                                                        My project is audited
-                                                    </Button>
+                                    ) : (
+                                        <div className='flex items-center justify-between rounded-lg bg-panel-2 px-3 py-2 text-xs'>
+                                            <span className='truncate text-muted'>
+                                                {google?.account ? `Signed in as ${google.account.email}` : 'You’ll sign in with Google in your browser when the upload starts.'}
+                                            </span>
+                                            {google?.account && (
+                                                <Button size='icon' variant='ghost' className='h-7 w-7 shrink-0' onClick={signOut} title='Sign out of Google' aria-label='Sign out of Google'>
+                                                    <LogOut className='h-3.5 w-3.5' />
+                                                </Button>
+                                            )}
+                                        </div>
+                                    )}
+                                    <input
+                                        value={title}
+                                        onChange={(e) => setTitle(e.target.value)}
+                                        placeholder='Title'
+                                        className='h-9 w-full rounded-lg border border-line bg-panel-2 px-3 text-sm outline-none focus:border-accent'
+                                        aria-label='Title'
+                                        title='Title'
+                                    />
+                                    <textarea
+                                        value={description}
+                                        onChange={(e) => setDescription(e.target.value)}
+                                        placeholder='Description (optional)'
+                                        rows={2}
+                                        className='w-full resize-none rounded-lg border border-line bg-panel-2 p-2 text-sm outline-none focus:border-accent'
+                                        aria-label='Description'
+                                        title='Description'
+                                    />
+                                    {settings.target === 'youtube' && (
+                                        <Group label='Visibility'>
+                                            <Segment value={settings.privacy} options={PRIVACY.map((p) => ({ ...p, hint: `${p.label} on YouTube` }))} onChange={(privacy) => update({ privacy })} />
+                                            {settings.privacy !== 'private' && !settings.youtubeAudited ? (
+                                                <div className='space-y-2 rounded-lg border border-warning/30 bg-warning-soft p-3 text-xs'>
+                                                    <p className='text-warning-fg'>
+                                                        Until Google audits your API project, YouTube locks videos uploaded from apps to <b>private</b>, even when you pick{' '}
+                                                        {settings.privacy}. To publish now, export the MP4 and upload it in YouTube Studio.
+                                                    </p>
+                                                    <div className='flex flex-wrap items-center gap-2'>
+                                                        <Button size='sm' variant='secondary' onClick={() => start('studio')} title='Export the MP4, show it in Finder and open YouTube Studio'>
+                                                            <ExternalLink className='h-3.5 w-3.5' /> Export & open YouTube Studio
+                                                        </Button>
+                                                        <Button size='sm' variant='ghost' onClick={() => update({ youtubeAudited: true })} title='Hide this note: my project passed the YouTube API audit'>
+                                                            My project is audited
+                                                        </Button>
+                                                    </div>
                                                 </div>
-                                            </div>
-                                        ) : (
-                                            <p className='text-xs text-muted'>
-                                                {settings.youtubeAudited ? 'Uploads use the visibility you choose.' : 'Private videos are only visible to you.'}
-                                            </p>
-                                        )}
-                                    </Group>
-                                )}
-                            </div>
-                        )}
-
-                        <p className='text-xs text-muted'>
-                            {size.width} × {size.height} · {formatDuration(totalDuration(edit.clips))} · saved to Movies › Capturita › Exports
-                        </p>
-                        {state.status === 'error' && <p className='rounded-lg bg-danger-soft p-3 text-xs text-danger-fg'>Export failed: {state.message}</p>}
-                        <Button variant='primary' className='w-full' onClick={() => start()} disabled={needsSetup} title={needsSetup ? 'Connect Google first' : undefined}>
-                            <Download className='h-4 w-4' /> {uploading ? 'Export & upload' : 'Export'}
-                        </Button>
-                    </>
-                )}
-
-                {state.status === 'exporting' && (
-                    <Progress label={PHASES[state.progress.phase]} value={state.progress.progress} onCancel={cancel} cancelLabel='Cancel export' />
-                )}
-
-                {state.status === 'signing-in' && (
-                    <div className='flex items-center gap-3 rounded-lg bg-panel-2 p-3 text-sm'>
-                        <Loader2 className='h-4 w-4 shrink-0 animate-spin' />
-                        <span>Finish signing in with Google in your browser…</span>
-                    </div>
-                )}
-
-                {state.status === 'uploading' && (
-                    <Progress
-                        label={`Uploading to ${settings.target === 'youtube' ? 'YouTube' : 'Google Drive'}… ${formatBytes(state.sent)} of ${formatBytes(state.total)}`}
-                        value={state.sent / Math.max(1, state.total)}
-                        onCancel={cancel}
-                        cancelLabel='Cancel upload'
-                    />
-                )}
-
-                {state.status === 'error' && state.path && (
-                    <div className='space-y-3'>
-                        <p className='rounded-lg bg-danger-soft p-3 text-xs text-danger-fg'>Upload failed: {state.message}</p>
-                        <p className='text-xs text-muted'>The MP4 was exported and is still saved on this Mac.</p>
-                        <div className='flex justify-end gap-2'>
-                            <Button size='icon' variant='secondary' onClick={() => revealItemInDir(state.path!)} title='Show the MP4 in Finder' aria-label='Show in Finder'>
-                                <FolderOpen className='h-4 w-4' />
-                            </Button>
-                            <Button
-                                size='icon'
-                                variant='primary'
-                                onClick={() => settings.target !== 'file' && upload(state.path!, settings.target)}
-                                title='Retry the upload'
-                                aria-label='Retry the upload'
-                            >
-                                <RotateCw className='h-4 w-4' />
-                            </Button>
-                        </div>
-                    </div>
-                )}
-
-                {state.status === 'done' && (
-                    <div className='space-y-4'>
-                        <div className='flex items-start gap-3 rounded-lg bg-success-soft p-3'>
-                            <CheckCircle2 className='mt-0.5 h-5 w-5 shrink-0 text-success' />
-                            <div className='min-w-0 text-sm'>
-                                <p className='font-medium'>{state.url ? 'Uploaded' : 'Saved'}</p>
-                                <p className='truncate text-xs text-muted'>{state.url ?? state.path.split('/').pop()}</p>
-                                <p className='text-xs text-muted'>Took {formatDuration(state.seconds)}</p>
-                                {state.lockedPrivate && (
-                                    <p className='pt-1 text-xs text-warning-fg'>YouTube kept it private because your API project isn't audited yet. Upload the MP4 in YouTube Studio to make it public.</p>
-                                )}
-                            </div>
-                        </div>
-                        <div className='flex justify-end gap-2'>
-                            {state.url && (
-                                <>
-                                    <Button size='icon' variant='primary' onClick={() => openUrl(state.url!)} title='Open in the browser' aria-label='Open in the browser'>
-                                        <ExternalLink className='h-4 w-4' />
-                                    </Button>
-                                    <Button
-                                        size='icon'
-                                        variant='secondary'
-                                        onClick={() =>
-                                            navigator.clipboard
-                                                .writeText(state.url!)
-                                                .then(() => toast.success('Link copied'))
-                                                .catch(() => toast.error('Could not copy the link'))
-                                        }
-                                        title='Copy link'
-                                        aria-label='Copy link'
-                                    >
-                                        <Copy className='h-4 w-4' />
-                                    </Button>
-                                </>
+                                            ) : (
+                                                <p className='text-xs text-muted'>
+                                                    {settings.youtubeAudited ? 'Uploads use the visibility you choose.' : 'Private videos are only visible to you.'}
+                                                </p>
+                                            )}
+                                        </Group>
+                                    )}
+                                </div>
                             )}
-                            <Button size='icon' variant='secondary' onClick={() => revealItemInDir(state.path)} title='Show the MP4 in Finder' aria-label='Show in Finder'>
-                                <FolderOpen className='h-4 w-4' />
+
+                            <p className='text-xs text-muted'>
+                                {size.width} × {size.height} · {formatDuration(totalDuration(edit.clips))} · saved to Movies › Capturita › Exports
+                            </p>
+                            {state.status === 'error' && <p className='rounded-lg bg-danger-soft p-3 text-xs text-danger-fg'>Export failed: {state.message}</p>}
+                            <Button variant='primary' className='w-full' onClick={() => start()} disabled={needsSetup} title={needsSetup ? 'Connect Google first' : undefined}>
+                                <Download className='h-4 w-4' /> {uploading ? 'Export & upload' : 'Export'}
                             </Button>
-                            <Button size='icon' variant='ghost' onClick={() => setState({ status: 'idle' })} title='Export again with other settings' aria-label='Export again'>
-                                <Download className='h-4 w-4' />
-                            </Button>
+                        </>
+                    )}
+
+                    {state.status === 'exporting' && (
+                        <Progress label={PHASES[state.progress.phase]} value={state.progress.progress} onCancel={cancel} cancelLabel='Cancel export' />
+                    )}
+
+                    {state.status === 'signing-in' && (
+                        <div className='flex items-center gap-3 rounded-lg bg-panel-2 p-3 text-sm'>
+                            <Loader2 className='h-4 w-4 shrink-0 animate-spin' />
+                            <span>Finish signing in with Google in your browser…</span>
                         </div>
-                    </div>
-                )}
+                    )}
+
+                    {state.status === 'uploading' && (
+                        <Progress
+                            label={`Uploading to ${settings.target === 'youtube' ? 'YouTube' : 'Google Drive'}… ${formatBytes(state.sent)} of ${formatBytes(state.total)}`}
+                            value={state.sent / Math.max(1, state.total)}
+                            onCancel={cancel}
+                            cancelLabel='Cancel upload'
+                        />
+                    )}
+
+                    {state.status === 'error' && state.path && (
+                        <div className='space-y-3'>
+                            <p className='rounded-lg bg-danger-soft p-3 text-xs text-danger-fg'>Upload failed: {state.message}</p>
+                            <p className='text-xs text-muted'>The MP4 was exported and is still saved on this Mac.</p>
+                            <div className='flex justify-end gap-2'>
+                                <Button size='icon' variant='secondary' onClick={() => revealItemInDir(state.path!)} title='Show the MP4 in Finder' aria-label='Show in Finder'>
+                                    <FolderOpen className='h-4 w-4' />
+                                </Button>
+                                <Button
+                                    size='icon'
+                                    variant='primary'
+                                    onClick={() => settings.target !== 'file' && upload(state.path!, settings.target)}
+                                    title='Retry the upload'
+                                    aria-label='Retry the upload'
+                                >
+                                    <RotateCw className='h-4 w-4' />
+                                </Button>
+                            </div>
+                        </div>
+                    )}
+
+                    {state.status === 'done' && (
+                        <div className='space-y-4'>
+                            <div className='flex items-start gap-3 rounded-lg bg-success-soft p-3'>
+                                <CheckCircle2 className='mt-0.5 h-5 w-5 shrink-0 text-success' />
+                                <div className='min-w-0 text-sm'>
+                                    <p className='font-medium'>{state.url ? 'Uploaded' : 'Saved'}</p>
+                                    <p className='truncate text-xs text-muted'>{state.url ?? state.path.split('/').pop()}</p>
+                                    <p className='text-xs text-muted'>Took {formatDuration(state.seconds)}</p>
+                                    {state.lockedPrivate && (
+                                        <p className='pt-1 text-xs text-warning-fg'>YouTube kept it private because your API project isn't audited yet. Upload the MP4 in YouTube Studio to make it public.</p>
+                                    )}
+                                </div>
+                            </div>
+                            <div className='flex justify-end gap-2'>
+                                {state.url && (
+                                    <>
+                                        <Button size='icon' variant='primary' onClick={() => openUrl(state.url!)} title='Open in the browser' aria-label='Open in the browser'>
+                                            <ExternalLink className='h-4 w-4' />
+                                        </Button>
+                                        <Button
+                                            size='icon'
+                                            variant='secondary'
+                                            onClick={() =>
+                                                navigator.clipboard
+                                                    .writeText(state.url!)
+                                                    .then(() => toast.success('Link copied'))
+                                                    .catch(() => toast.error('Could not copy the link'))
+                                            }
+                                            title='Copy link'
+                                            aria-label='Copy link'
+                                        >
+                                            <Copy className='h-4 w-4' />
+                                        </Button>
+                                    </>
+                                )}
+                                <Button size='icon' variant='secondary' onClick={() => revealItemInDir(state.path)} title='Show the MP4 in Finder' aria-label='Show in Finder'>
+                                    <FolderOpen className='h-4 w-4' />
+                                </Button>
+                                <Button size='icon' variant='ghost' onClick={() => setState({ status: 'idle' })} title='Export again with other settings' aria-label='Export again'>
+                                    <Download className='h-4 w-4' />
+                                </Button>
+                            </div>
+                        </div>
+                    )}
+                </div>
             </div>
-        </div>
+            {googleSettings && (
+                <SettingsDialog
+                    initialSection='google'
+                    onClose={() => {
+                        setGoogleSettings(false);
+                        refreshGoogle();
+                    }}
+                />
+            )}
+        </>
     );
 }
 

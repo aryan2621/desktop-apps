@@ -423,8 +423,8 @@ export function EditorView({ project, onClose }: { project: Project; onClose: ()
             const target = event.target as HTMLElement;
             const inField = ['INPUT', 'SELECT', 'TEXTAREA'].includes(target.tagName);
             if (inField && (target as HTMLInputElement).type !== 'range') return;
-            // The export dialog owns the keyboard while it's open.
-            if (exportingRef.current) return;
+            // The export dialog, and the recorder (opened over the editor by ⌘⇧R), own the keyboard while open.
+            if (exportingRef.current || document.querySelector('[data-recorder-open]')) return;
             const actions = keyActions.current;
             if (event.metaKey && (event.key === '=' || event.key === '+' || event.key === '-' || event.key === '0')) {
                 event.preventDefault();

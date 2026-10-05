@@ -1,10 +1,10 @@
 import { useCallback, useEffect, useRef, useState, type ReactNode } from 'react';
 import { listen } from '@tauri-apps/api/event';
 import { getCurrentWindow } from '@tauri-apps/api/window';
-import { AppWindow, Camera, CameraOff, Check, Crop, EyeOff, Mic, MicOff, Monitor, RefreshCw, Search, Volume2, VolumeX, ZoomIn } from 'lucide-react';
+import { AppWindow, Camera, CameraOff, Check, Crop, Mic, MicOff, Monitor, RefreshCw, Volume2, VolumeX, X } from 'lucide-react';
 import { toast } from 'sonner';
 import { api, errorMessage, type Display, type Permissions, type RecordingOptions, type Rect, type SourceList, type Thumbnails, type WindowSource } from '../lib/api';
-import { Button, IconButton, Kbd, Popover, Segmented, Switch, cx } from './ui';
+import { Button, IconButton, Popover, Segmented, Switch, cx } from './ui';
 
 type Mode = 'display' | 'window' | 'area';
 
@@ -32,12 +32,32 @@ function loadSettings(): Settings {
     }
 }
 
-export function RecorderPanel({ permissions, onPermissionsChange }: { permissions: Permissions | null; onPermissionsChange: (p: Permissions) => void }) {
+/**
+ * Everything about the next recording: source, audio, camera, and the record button. Stays
+ * mounted (in a hidden dialog) so ⌘⇧R can start a recording with these settings at any time.
+ */
+export function RecorderPanel({
+    permissions,
+    onPermissionsChange,
+    visible = true,
+    onStarted,
+    onNotReady,
+    onClose,
+}: {
+    /** Whether the panel is on screen; sources are only refreshed on focus while it is. */
+    visible?: boolean;
+    permissions: Permissions | null;
+    onPermissionsChange: (p: Permissions) => void;
+    /** A recording is starting (the countdown began). */
+    onStarted?: () => void;
+    /** Recording was asked for (⌘⇧R) but something is missing, like a window to record. */
+    onNotReady?: () => void;
+    onClose?: () => void;
+}) {
     const [settings, setSettings] = useState<Settings>(loadSettings);
     const [sources, setSources] = useState<SourceList | null>(null);
     const [thumbnails, setThumbnails] = useState<Thumbnails>({ displays: {}, windows: {} });
     const [loadingSources, setLoadingSources] = useState(false);
-    const [search, setSearch] = useState('');
     const [cameraVisible, setCameraVisible] = useState(false);
     const [busy, setBusy] = useState(false);
     const screenGranted = permissions?.screen === 'granted';
@@ -73,22 +93,32 @@ export function RecorderPanel({ permissions, onPermissionsChange }: { permission
         }
     }, [screenGranted]);
 
+    // Loaded once at start (⌘⇧R needs the displays), and again each time the panel is shown.
     useEffect(() => {
-        refreshSources();
+        if (visible) refreshSources();
+    }, [visible, refreshSources]);
+    const loadedOnce = useRef(false);
+    useEffect(() => {
+        if (!loadedOnce.current && screenGranted) {
+            loadedOnce.current = true;
+            refreshSources();
+        }
+    }, [screenGranted, refreshSources]);
+    useEffect(() => {
+        if (!visible) return;
         // Windows open and close while Capturita is in the background.
         const unlisten = getCurrentWindow().onFocusChanged(({ payload: focused }) => focused && refreshSources());
         return () => {
             unlisten.then((fn) => fn());
         };
-    }, [refreshSources]);
+    }, [visible, refreshSources]);
 
     const displays = sources?.displays ?? [];
     const mainDisplay = displays.find((d) => d.isMain) ?? displays[0];
     const displayId = displays.some((d) => d.id === settings.displayId) ? settings.displayId! : mainDisplay?.id;
     const selectedWindow = sources?.windows.find((w) => w.id === settings.windowId);
     const areaDisplay = displays.find((d) => d.id === (settings.area?.displayId ?? displayId));
-    const query = search.trim().toLowerCase();
-    const windows = (sources?.windows ?? []).filter((w) => !query || `${w.app} ${w.title}`.toLowerCase().includes(query));
+    const windows = sources?.windows ?? [];
     const microphones = sources?.microphones ?? [];
     const cameras = sources?.cameras ?? [];
     const microphone = microphones.find((m) => m.id === settings.microphoneId);
@@ -162,11 +192,13 @@ export function RecorderPanel({ permissions, onPermissionsChange }: { permission
         const options = buildOptions();
         if (typeof options === 'string') {
             toast.error(options);
+            onNotReady?.();
             return;
         }
         setBusy(true);
         try {
             await api.prepare(options);
+            onStarted?.();
         } catch (error) {
             toast.error(errorMessage(error));
         } finally {
@@ -178,7 +210,14 @@ export function RecorderPanel({ permissions, onPermissionsChange }: { permission
     const startRef = useRef(startRecording);
     startRef.current = startRecording;
     useEffect(() => {
-        const unlisten = listen('shortcut-record', () => startRef.current());
+        const unlisten = listen('shortcut-record', () => {
+            // An export renders in this window; hiding it for a recording would stall the export.
+            if (document.querySelector('[data-export-busy]')) {
+                toast.error('Finish or cancel the export before starting a recording');
+                return;
+            }
+            startRef.current();
+        });
         return () => {
             unlisten.then((fn) => fn());
         };
@@ -194,129 +233,34 @@ export function RecorderPanel({ permissions, onPermissionsChange }: { permission
               : recordDisplay?.name ?? 'the screen';
     const notReady = !screenGranted ? 'Allow screen recording first' : ready ? null : (buildOptions() as string);
 
+    const MODES: { value: Mode; label: string; hint: string; icon: ReactNode }[] = [
+        { value: 'display', label: 'Screen', hint: 'Record a whole display', icon: <Monitor className='h-4 w-4' /> },
+        { value: 'window', label: 'Window', hint: 'Record one window', icon: <AppWindow className='h-4 w-4' /> },
+        { value: 'area', label: 'Area', hint: 'Record part of the screen', icon: <Crop className='h-4 w-4' /> },
+    ];
+    const mode = MODES.find((m) => m.value === settings.mode) ?? MODES[0];
+
     return (
-        <section className='flex min-h-0 flex-1 flex-col overflow-hidden rounded-2xl border border-line bg-panel shadow-sm'>
-            <div className='space-y-3 border-b border-line p-4'>
-                <div className='flex items-center justify-between'>
-                    <h2 className='font-serif text-lg font-medium tracking-tight'>New recording</h2>
-                    <IconButton label='Refresh screens and windows' size='icon-sm' onClick={refreshSources} disabled={loadingSources || !screenGranted}>
-                        <RefreshCw className={cx('h-3.5 w-3.5', loadingSources && 'animate-spin')} />
-                    </IconButton>
-                </div>
-                <Segmented<Mode>
-                    value={settings.mode}
-                    onChange={(mode) => update({ mode })}
-                    options={[
-                        { value: 'display', label: 'Screen', icon: <Monitor className='h-4 w-4' />, hint: 'Record a whole display' },
-                        { value: 'window', label: 'Window', icon: <AppWindow className='h-4 w-4' />, hint: 'Record one window' },
-                        { value: 'area', label: 'Area', icon: <Crop className='h-4 w-4' />, hint: 'Record part of the screen' },
-                    ]}
-                />
-                {settings.mode === 'window' && (
-                    <label className='flex h-9 items-center gap-2 rounded-lg border border-line bg-panel-2 px-3 focus-within:border-accent'>
-                        <Search className='h-3.5 w-3.5 text-subtle' />
-                        <input
-                            value={search}
-                            onChange={(e) => setSearch(e.target.value)}
-                            placeholder='Search windows'
-                            className='h-full flex-1 bg-transparent text-sm outline-none placeholder:text-subtle'
-                            aria-label='Search windows'
-                        />
-                    </label>
-                )}
-            </div>
-
-            <div className='flex min-h-0 flex-1 flex-col overflow-y-auto p-4'>
-                {!screenGranted ? (
-                    <p className='p-6 text-center text-sm text-muted'>Allow screen recording to see your screens and windows here.</p>
-                ) : !sources ? (
-                    <div className='grid gap-3'>
-                        <Skeleton className='aspect-[16/10]' />
-                        <Skeleton className='h-10' />
-                    </div>
-                ) : settings.mode === 'display' ? (
-                    <div className='grid gap-3'>
-                        {displays.map((display) => (
-                            <DisplayCard
-                                key={display.id}
-                                display={display}
-                                image={thumbnails.displays[display.id]}
-                                selected={display.id === displayId}
-                                onSelect={() => update({ displayId: display.id })}
-                            />
-                        ))}
-                    </div>
-                ) : settings.mode === 'window' ? (
-                    windows.length === 0 ? (
-                        <p className='p-6 text-center text-sm text-muted'>{query ? 'No windows match your search.' : 'No windows found.'}</p>
-                    ) : (
-                        <div className='grid grid-cols-2 gap-3'>
-                            {windows.map((window) => (
-                                <WindowCard
-                                    key={window.id}
-                                    window={window}
-                                    image={thumbnails.windows[window.id]}
-                                    selected={window.id === settings.windowId}
-                                    onSelect={() => update({ windowId: window.id })}
-                                />
-                            ))}
-                        </div>
-                    )
-                ) : (
-                    <div className='space-y-3'>
-                        {displays.length > 1 && (
-                            <Segmented<number>
-                                size='sm'
-                                value={areaDisplay?.id ?? 0}
-                                onChange={(id) => update({ displayId: id, area: settings.area?.displayId === id ? settings.area : null })}
-                                options={displays.map((d) => ({ value: d.id, label: d.name, hint: `Pick an area on ${d.name}` }))}
-                            />
+        // No overflow-hidden here: the microphone and camera menus open past the sidebar's edge.
+        <section className='flex h-full w-full rounded-2xl border border-line bg-panel shadow-[var(--shadow-lg)]'>
+            <nav className='flex w-60 shrink-0 flex-col gap-1 rounded-l-2xl border-r border-line bg-panel-2 p-3'>
+                <span className='px-2 pb-3 pt-1 font-serif text-[17px] font-medium tracking-tight'>New recording</span>
+                {MODES.map((m) => (
+                    <button
+                        key={m.value}
+                        onClick={() => update({ mode: m.value })}
+                        title={m.hint}
+                        className={cx(
+                            'flex cursor-default items-center gap-2.5 rounded-lg px-2.5 py-2 text-left text-sm transition-colors',
+                            settings.mode === m.value ? 'bg-raised font-medium text-fg' : 'text-muted hover:bg-raised/60 hover:text-fg'
                         )}
-                        {areaDisplay && (
-                            <button
-                                onClick={pickArea}
-                                className='group relative block w-full overflow-hidden rounded-xl border border-line bg-stage'
-                                style={{ aspectRatio: `${areaDisplay.width} / ${areaDisplay.height}` }}
-                                title='Drag out the area to record on this display'
-                            >
-                                {thumbnails.displays[areaDisplay.id] && (
-                                    <img src={thumbnails.displays[areaDisplay.id]} className='absolute inset-0 h-full w-full object-cover opacity-70' draggable={false} />
-                                )}
-                                {settings.area?.displayId === areaDisplay.id ? (
-                                    <span
-                                        className='absolute rounded-sm border-2 border-accent bg-accent/15 shadow-[0_0_0_9999px_rgba(0,0,0,0.45)]'
-                                        style={{
-                                            left: `${(settings.area.rect.x / areaDisplay.width) * 100}%`,
-                                            top: `${(settings.area.rect.y / areaDisplay.height) * 100}%`,
-                                            width: `${(settings.area.rect.width / areaDisplay.width) * 100}%`,
-                                            height: `${(settings.area.rect.height / areaDisplay.height) * 100}%`,
-                                        }}
-                                    />
-                                ) : (
-                                    <span className='absolute inset-0 flex items-center justify-center bg-black/35 text-sm font-medium text-white'>
-                                        <Crop className='mr-2 h-4 w-4' /> Select an area
-                                    </span>
-                                )}
-                            </button>
-                        )}
-                        {settings.area && (
-                            <div className='flex items-center justify-between text-xs text-muted'>
-                                <span className='font-mono'>
-                                    {settings.area.rect.width} × {settings.area.rect.height} pt
-                                </span>
-                                <Button size='sm' variant='subtle' onClick={pickArea} title='Choose a different area'>
-                                    <Crop className='h-3.5 w-3.5' /> Change
-                                </Button>
-                            </div>
-                        )}
-                    </div>
-                )}
-                {screenGranted && <Tip mode={settings.mode} />}
-            </div>
-
-            {/* Record bar */}
-            <div className='space-y-3 border-t border-line bg-panel-2/60 p-4'>
-                <div className='grid grid-cols-3 gap-2'>
+                    >
+                        {m.icon}
+                        {m.label}
+                    </button>
+                ))}
+                <div className='mt-auto space-y-2'>
+                    <p className='px-2 text-[11px] font-semibold uppercase tracking-wider text-subtle'>Sound and camera</p>
                     <ToggleChip
                         active={settings.systemAudio}
                         onClick={() => update({ systemAudio: !settings.systemAudio })}
@@ -326,7 +270,7 @@ export function RecorderPanel({ permissions, onPermissionsChange }: { permission
                     />
                     <Popover
                         side='top'
-                        align='center'
+                        align='start'
                         trigger={(open, toggle) => (
                             <ToggleChip
                                 active={!!microphone}
@@ -363,7 +307,7 @@ export function RecorderPanel({ permissions, onPermissionsChange }: { permission
                     </Popover>
                     <Popover
                         side='top'
-                        align='end'
+                        align='start'
                         trigger={(open, toggle) => (
                             <ToggleChip
                                 active={cameraVisible && !!camera}
@@ -391,33 +335,133 @@ export function RecorderPanel({ permissions, onPermissionsChange }: { permission
                         )}
                     </Popover>
                 </div>
-                <p className='flex items-center gap-2 text-xs'>
-                    <span className={cx('h-1.5 w-1.5 shrink-0 rounded-full', notReady ? 'bg-warning' : 'bg-success')} />
-                    {notReady ? (
-                        <span className='truncate text-warning-fg'>{notReady}</span>
+            </nav>
+
+            <div className='flex min-w-0 flex-1 flex-col'>
+                <div className='flex items-center justify-between border-b border-line px-6 py-3.5'>
+                    <h2 className='text-sm font-medium'>{mode.hint}</h2>
+                    <div className='flex items-center gap-1'>
+                        <IconButton label='Refresh screens and windows' size='icon-sm' onClick={refreshSources} disabled={loadingSources || !screenGranted}>
+                            <RefreshCw className={cx('h-3.5 w-3.5', loadingSources && 'animate-spin')} />
+                        </IconButton>
+                        {onClose && (
+                            <IconButton label='Close' size='icon-sm' onClick={onClose}>
+                                <X className='h-4 w-4' />
+                            </IconButton>
+                        )}
+                    </div>
+                </div>
+
+                <div className='min-h-0 flex-1 overflow-y-auto p-6'>
+                    {!screenGranted ? (
+                        <p className='p-6 text-center text-sm text-muted'>Allow screen recording to see your screens and windows here.</p>
+                    ) : !sources ? (
+                        <div className='grid gap-3'>
+                            <Skeleton className='aspect-[16/10]' />
+                            <Skeleton className='h-10' />
+                        </div>
+                    ) : settings.mode === 'display' ? (
+                        <div className='grid grid-cols-[repeat(auto-fit,minmax(260px,400px))] justify-center gap-4'>
+                            {displays.map((display) => (
+                                <DisplayCard
+                                    key={display.id}
+                                    display={display}
+                                    image={thumbnails.displays[display.id]}
+                                    selected={display.id === displayId}
+                                    onSelect={() => update({ displayId: display.id })}
+                                />
+                            ))}
+                        </div>
+                    ) : settings.mode === 'window' ? (
+                        windows.length === 0 ? (
+                            <p className='p-6 text-center text-sm text-muted'>No windows found.</p>
+                        ) : (
+                            <div className='grid grid-cols-3 gap-3'>
+                                {windows.map((window) => (
+                                    <WindowCard
+                                        key={window.id}
+                                        window={window}
+                                        image={thumbnails.windows[window.id]}
+                                        selected={window.id === settings.windowId}
+                                        onSelect={() => update({ windowId: window.id })}
+                                    />
+                                ))}
+                            </div>
+                        )
                     ) : (
-                        <span className='truncate text-muted'>
-                            Ready to record <span className='font-medium text-fg'>{sourceLabel}</span>
-                        </span>
+                        <div className='mx-auto w-full max-w-xl space-y-3'>
+                            {displays.length > 1 && (
+                                <Segmented<number>
+                                    size='sm'
+                                    value={areaDisplay?.id ?? 0}
+                                    onChange={(id) => update({ displayId: id, area: settings.area?.displayId === id ? settings.area : null })}
+                                    options={displays.map((d) => ({ value: d.id, label: d.name, hint: `Pick an area on ${d.name}` }))}
+                                />
+                            )}
+                            {areaDisplay && (
+                                <button
+                                    onClick={pickArea}
+                                    className='group relative block w-full overflow-hidden rounded-xl border border-line bg-stage'
+                                    style={{ aspectRatio: `${areaDisplay.width} / ${areaDisplay.height}` }}
+                                    title='Drag out the area to record on this display'
+                                >
+                                    {thumbnails.displays[areaDisplay.id] && (
+                                        <img src={thumbnails.displays[areaDisplay.id]} className='absolute inset-0 h-full w-full object-cover opacity-70' draggable={false} />
+                                    )}
+                                    {settings.area?.displayId === areaDisplay.id ? (
+                                        <span
+                                            className='absolute rounded-sm border-2 border-accent bg-accent/15 shadow-[0_0_0_9999px_rgba(0,0,0,0.45)]'
+                                            style={{
+                                                left: `${(settings.area.rect.x / areaDisplay.width) * 100}%`,
+                                                top: `${(settings.area.rect.y / areaDisplay.height) * 100}%`,
+                                                width: `${(settings.area.rect.width / areaDisplay.width) * 100}%`,
+                                                height: `${(settings.area.rect.height / areaDisplay.height) * 100}%`,
+                                            }}
+                                        />
+                                    ) : (
+                                        <span className='absolute inset-0 flex items-center justify-center bg-black/35 text-sm font-medium text-white'>
+                                            <Crop className='mr-2 h-4 w-4' /> Select an area
+                                        </span>
+                                    )}
+                                </button>
+                            )}
+                            {settings.area && (
+                                <div className='flex items-center justify-between text-xs text-muted'>
+                                    <span className='font-mono'>
+                                        {settings.area.rect.width} × {settings.area.rect.height} pt
+                                    </span>
+                                    <Button size='sm' variant='subtle' onClick={pickArea} title='Choose a different area'>
+                                        <Crop className='h-3.5 w-3.5' /> Change
+                                    </Button>
+                                </div>
+                            )}
+                        </div>
                     )}
-                </p>
-                <Button
-                    variant='record'
-                    size='lg'
-                    className='w-full'
-                    onClick={startRecording}
-                    disabled={!screenGranted || busy || !ready}
-                    title={!screenGranted ? 'Allow screen recording first' : ready ? 'Start recording (⌘⇧R)' : (buildOptions() as string)}
-                >
-                    <span className='relative flex h-3 w-3'>
-                        {!notReady && <span className='absolute inset-0 animate-ping rounded-full bg-white/60' />}
-                        <span className='relative h-3 w-3 rounded-full bg-white' />
-                    </span>
-                    Start recording
-                </Button>
-                <p className='text-center text-xs text-subtle'>
-                    or press <Kbd>⌘⇧R</Kbd> anywhere
-                </p>
+                </div>
+
+
+                <div className='flex items-center justify-between gap-4 rounded-br-2xl border-t border-line px-6 py-3.5'>
+                    <p className={cx('min-w-0 truncate text-xs', notReady ? 'text-warning-fg' : 'text-muted')}>
+                        {notReady ?? (
+                            <>
+                                Records <span className='font-medium text-fg'>{sourceLabel}</span>
+                            </>
+                        )}
+                    </p>
+                    <Button
+                        variant='record'
+                        className='w-48'
+                        onClick={startRecording}
+                        disabled={!screenGranted || busy || !ready}
+                        title={notReady ?? `Record ${sourceLabel} (⌘⇧R from any app)`}
+                    >
+                        <span className='relative flex h-3 w-3'>
+                            {!notReady && <span className='absolute inset-0 animate-ping rounded-full bg-white/60' />}
+                            <span className='relative h-3 w-3 rounded-full bg-white' />
+                        </span>
+                        Start recording
+                    </Button>
+                </div>
             </div>
         </section>
     );
@@ -510,29 +554,6 @@ function ToggleChip({ active, pressed, onClick, label, status, icon }: { active:
             </span>
             <span className='w-full truncate text-[11px] text-subtle'>{status}</span>
         </button>
-    );
-}
-
-const TIPS = {
-    display: { icon: ZoomIn, text: 'Auto-zoom follows your cursor, so details stay readable.' },
-    window: { icon: Camera, text: 'The camera bubble is recorded separately: move or hide it later.' },
-    area: { icon: EyeOff, text: 'Blur emails or keys later in the editor, no need to re-record.' },
-};
-
-/** A small tip at the bottom of the source list, for the mode picked. */
-function Tip({ mode }: { mode: Mode }) {
-    const tip = TIPS[mode];
-    return (
-        <div className='mt-auto pt-4'>
-        <div className='flex items-center gap-2.5 rounded-xl bg-panel-2/70 px-3 py-2 text-xs text-muted'>
-            <span className='flex h-6 w-6 shrink-0 items-center justify-center rounded-md bg-accent/15 text-accent'>
-                <tip.icon className='h-3.5 w-3.5' />
-            </span>
-            <span>
-                <span className='font-medium text-fg'>Tip:</span> {tip.text}
-            </span>
-        </div>
-        </div>
     );
 }
 

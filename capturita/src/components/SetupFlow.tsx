@@ -301,7 +301,7 @@ function Done({ onFinish }: { onFinish: () => void }) {
         <div className='space-y-5'>
             <div className='space-y-1'>
                 <h2 className='font-serif text-xl font-medium tracking-tight'>You're all set</h2>
-                <p className='text-sm text-muted'>Pick a screen, window or area on the left and press Record.</p>
+                <p className='text-sm text-muted'>Click New recording, pick a screen, window or area, and press Start recording.</p>
             </div>
             <div className='flex items-center gap-3 rounded-xl border border-line bg-panel-2 p-3 text-sm'>
                 <Keyboard className='h-4 w-4 shrink-0 text-muted' />

@@ -61,11 +61,19 @@ export function exportSize(edit: Edit, project: Project, resolution: Resolution)
  * editor preview, and encoded with the hardware H.264 encoder; audio is mixed offline with the
  * same scheduler as playback and encoded to AAC.
  */
+/** The name an export gets unless the user types another: the source and when it was recorded. */
+export function defaultExportName(project: Project) {
+    const date = new Date(project.createdAt).toISOString().slice(0, 16).replace('T', ' ').replace(':', '.');
+    return `${project.source.name} ${date}`;
+}
+
 export async function exportVideo(options: {
     project: Project;
     edit: Edit;
     cursor: CursorData | null;
     settings: ExportSettings;
+    /** The MP4's name without extension; a number is added if the name is taken. */
+    fileName?: string;
     onProgress: (progress: ExportProgress) => void;
     signal: AbortSignal;
 }): Promise<string> {
@@ -77,8 +85,7 @@ export async function exportVideo(options: {
         if (signal.aborted) throw new ExportCancelled();
     };
 
-    const date = new Date(project.createdAt).toISOString().slice(0, 16).replace('T', ' ').replace(':', '.');
-    const path = await invoke<string>('export_open', { name: `${project.source.name} ${date}` });
+    const path = await invoke<string>('export_open', { name: options.fileName?.trim().replace(/\.mp4$/i, '').trim() || defaultExportName(project) });
     const inputs: Input[] = [];
     let output: Output | null = null;
 
