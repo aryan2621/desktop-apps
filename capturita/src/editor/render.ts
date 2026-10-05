@@ -13,7 +13,7 @@ const FULL: NormalizedRect = { x: 0, y: 0, width: 1, height: 1 };
 /** Motion blur looks back over this much time at full strength (half a frame at 60 fps, like a 180° shutter). */
 const SHUTTER = 1 / 120;
 /** Most screen copies blended for motion blur. */
-const BLUR_SAMPLES = 6;
+const BLUR_SAMPLES = 5;
 
 export interface Rect {
     x: number;
@@ -137,13 +137,16 @@ export function drawFrame(ctx: CanvasRenderingContext2D, width: number, height: 
         const drawScreen = (view: NormalizedRect) =>
             ctx.drawImage(screen.image, view.x * screen.width, view.y * screen.height, view.width * screen.width, view.height * screen.height, content.x, content.y, content.width, content.height);
         const trail = inputs.ignoreCrop || inputs.noZoom ? [] : blurTrail(edit, project, cursor, time, width, height, crop, content);
-        if (trail.length > 0) {
-            // Average the views along the camera's recent path: each copy covers its share.
-            drawScreen(trail[0]);
-            for (let i = 1; i < trail.length; i++) {
+        const blurSource = trail.length > 0 ? copyForBlur(screen, trail, content) : null;
+        if (blurSource) {
+            // Average the views along the camera's recent path: each copy covers its share. They
+            // are drawn from one small copy of the frame: reading a big video frame several times
+            // per frame is slow enough to stall playback.
+            const { canvas, area, scaleX, scaleY } = blurSource;
+            trail.forEach((view, i) => {
                 ctx.globalAlpha = 1 / (i + 1);
-                drawScreen(trail[i]);
-            }
+                ctx.drawImage(canvas, (view.x - area.x) * scaleX, (view.y - area.y) * scaleY, view.width * scaleX, view.height * scaleY, content.x, content.y, content.width, content.height);
+            });
             ctx.globalAlpha = 1;
         } else {
             drawScreen(crop);
@@ -667,6 +670,34 @@ function blurTrail(edit: Edit, project: Project, cursor: CursorData | null, time
     const views: NormalizedRect[] = [crop];
     for (let i = 1; i < count; i++) views.push(screenView(edit, project, cursor, time - (span * i) / (count - 1), width, height).crop);
     return views;
+}
+
+let blurCanvas: HTMLCanvasElement | null = null;
+
+/**
+ * Copies the part of the screen frame that the blur views cover, once, at about the size it's
+ * drawn, so the views can be drawn from it cheaply. Coordinates are normalized to the recording.
+ */
+function copyForBlur(screen: FrameSource, views: NormalizedRect[], content: Rect) {
+    const left = Math.min(...views.map((v) => v.x));
+    const top = Math.min(...views.map((v) => v.y));
+    const right = Math.max(...views.map((v) => v.x + v.width));
+    const bottom = Math.max(...views.map((v) => v.y + v.height));
+    const area = { x: left, y: top, width: right - left, height: bottom - top };
+    // Pixels per normalized unit, matching the newest view's on-screen size (and never more than the source).
+    const scaleX = Math.min(screen.width, content.width / views[0].width);
+    const scaleY = Math.min(screen.height, content.height / views[0].height);
+    const w = Math.max(1, Math.ceil(area.width * scaleX));
+    const h = Math.max(1, Math.ceil(area.height * scaleY));
+    blurCanvas ??= document.createElement('canvas');
+    if (blurCanvas.width < w) blurCanvas.width = w;
+    if (blurCanvas.height < h) blurCanvas.height = h;
+    const c = blurCanvas.getContext('2d');
+    if (!c) return null;
+    c.imageSmoothingEnabled = true;
+    c.imageSmoothingQuality = 'high';
+    c.drawImage(screen.image, area.x * screen.width, area.y * screen.height, area.width * screen.width, area.height * screen.height, 0, 0, w, h);
+    return { canvas: blurCanvas, area, scaleX: w / area.width, scaleY: h / area.height };
 }
 
 const easeOutCubic = (x: number) => 1 - (1 - x) ** 3;

@@ -8,7 +8,7 @@ import { loadClickSound } from './clickSound';
 export type { ClickSounds } from './audioSchedule';
 
 /** Videos are re-seeked when they drift this far from the audio clock, at most once per cooldown. */
-const MAX_VIDEO_DRIFT = 0.1;
+const MAX_VIDEO_DRIFT = 0.2;
 const RESYNC_COOLDOWN_MS = 800;
 /** Lead time so every audio track starts on the same sample. */
 const START_LEAD = 0.05;
