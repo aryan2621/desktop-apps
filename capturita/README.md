@@ -1,34 +1,48 @@
 # Capturita
 
-macOS screen recorder and editor (macOS 15+). Record the screen, a window or an area with your
-microphone, system audio and camera, then polish it in the built-in editor and export an MP4 or
-upload it straight to YouTube or Google Drive.
+**Record your screen, make it look great, share it. Screen recorder and editor for macOS.**
 
-- **Record**: screen / window / area, mic, system audio, camera bubble, ⌘⇧R from anywhere.
-- **Edit**: trim and cut, speed up clips, auto-zoom that follows your cursor, cursor styles and
-  click effects, backgrounds, padding, rounded corners and shadow.
-- **Text**: titles with fonts, colours and animations (fade, rise, pop, slide, blur,
-  typewriter, word by word).
-- **Captions**: made from what's said in the recording, on this Mac (Whisper; the speech model
-  downloads once, 547 MB). Fix any word, style them (font, size, box or shadow, highlight the
-  word being spoken), burn them into the video and/or save an `.srt` file.
-- **Hide private info**: pixelate, blur or cover parts of the screen (emails, passwords, API
-  keys, chats) for as long as you choose. Boxes stay on the content while zooming and are baked
-  into every export; the original recording is never changed.
-- **Audio**: volume per track, fade in/out, background music.
-- **AI editing**: describe an edit — "cut the part about pricing", "speed up where nothing
-  happens", "add a title" — and a small AI model on this Mac (Qwen3 4B on a bundled llama.cpp
-  server; downloads once, 2.4 GB) proposes cuts, speed-ups, zooms and titles to review and apply.
-  One-click clean-ups remove filler words and long pauses.
-- **Share**: export to MP4, upload to YouTube or Google Drive.
+<!-- DEMO VIDEO: paste the https://github.com/user-attachments/assets/... link on the next line -->
 
-## Run
+- **Record** a screen, a window or an area, with your mic, system audio and a camera bubble. **⌘⇧R** from anywhere.
+- **Edit:** trim and cut, speed up, auto-zoom that follows your cursor, backgrounds, rounded corners and shadow.
+- **Captions** from what you said, **titles** with animations, and **hide private info** (blur emails, passwords, keys).
+- **AI editing:** type *"cut the part about pricing"* or *"speed up where nothing happens"* and review the edits it suggests.
+- **Share:** export an MP4 (up to 4K, 60 fps) or upload straight to YouTube or Google Drive.
+
+Captions and AI editing run on your Mac. Your recordings are never uploaded unless you choose to.
+
+**[⬇ Download for macOS](https://github.com/aryan2621/desktop-apps/releases/latest/download/Capturita_0.1.0_aarch64.dmg)**
+· macOS 15+, Apple silicon · [all downloads](https://github.com/aryan2621/desktop-apps/releases/latest)
+
+📖 **[User guide](docs/user.md)** — recording, every editing tool, shortcuts, export and upload
+☁️ **[Google setup](docs/google-setup.md)** — upload to YouTube and Drive with your own Google account
+🛠 **[Developer guide](docs/dev.md)** — build from source, code layout, how it works
+
+## Install
+
+1. Open the `.dmg` and drag **Capturita** into **Applications**, then open it.
+2. If macOS says **"Apple could not verify Capturita is free of malware"**: click **Done**, go to
+   **System Settings → Privacy & Security**, scroll down and click **Open Anyway**. (Capturita
+   isn't signed with a paid Apple certificate; that's the only reason for the warning.)
+3. If it says Capturita **"is damaged"**, run this once in Terminal and open it again:
+   ```bash
+   xattr -dr com.apple.quarantine /Applications/Capturita.app
+   ```
+4. The setup asks for **Screen Recording** (needed), **Microphone** and **Camera**, and offers the
+   captions model (547 MB, optional, once). AI models, theme and Google uploads are in **Settings** (⚙).
+
+## Quick start
+
+1. Click **New recording**, pick a screen, window or area, turn on mic / camera if you like, and press **Start recording**.
+2. Press **⌘⇧R** (or the stop button) to finish. The editor opens.
+3. Press **S** to cut a part, **T** to add text, **H** to hide something. **?** shows every shortcut.
+4. **⌘E** to export an MP4 or upload. Files are saved in `~/Movies/Capturita`.
+
+## Build from source
 
 ```bash
-npm install
-npm run tauri dev          # builds the Swift recorder helper, then starts the app
-npx tauri build --bundles app
+cd capturita && npm install && npx tauri build --bundles app
 ```
 
-Recordings and exports are saved in `~/Movies/Capturita`. Launching with
-`CAPTURITA_KEEP_WINDOW=1` keeps the window visible while recording (to film Capturita itself).
+Needs Node, Rust, Xcode's Swift tools and `cmake`. Details in the [developer guide](docs/dev.md).

@@ -1,69 +1,29 @@
-# PortMan CLI (Go)
+# PortMan CLI
 
-Pure Go implementation of the PortMan CLI. No Python required.
+PortMan's command line tool: one self-contained Go binary per platform, no Python needed.
 
-## Features
+📖 Install and every command: **[PortMan user guide → The command line tool](../docs/user.md#the-command-line-tool)**
+🛠 Building it: **[PortMan developer guide](../docs/dev.md#build-the-cli)**
 
-- **Cross-platform**: macOS, Linux, Windows
-- **Fast startup**: Cold start is effectively instant for typical usage
-- **Standalone**: Single binary per platform
+```bash
+portman list --state LISTEN      # what's listening
+portman kill 3000                # stop what's on port 3000
+portman info 3000                # details
+portman watch                    # live view (k kill, f filter, q quit)
+```
 
 ## Build
 
 ```bash
-cd cli
-
-go mod download
-
-# Build for current platform
+cd portman/cli
 go build -o portman .
 
-# Build for all platforms
-GOOS=darwin GOARCH=amd64 go build -o portman-darwin-amd64 .
-GOOS=darwin GOARCH=arm64 go build -o portman-darwin-arm64 .
-GOOS=linux GOARCH=amd64 go build -o portman-linux-amd64 .
+GOOS=darwin  GOARCH=arm64 go build -o portman-darwin-arm64 .
+GOOS=darwin  GOARCH=amd64 go build -o portman-darwin-amd64 .
+GOOS=linux   GOARCH=amd64 go build -o portman-linux-amd64 .
+GOOS=linux   GOARCH=arm64 go build -o portman-linux-arm64 .
 GOOS=windows GOARCH=amd64 go build -o portman-windows-amd64.exe .
 ```
 
-## Usage
-
-```bash
-# List ports
-./portman list
-./portman list --state LISTEN
-./portman list --proc node
-./portman list --json
-
-# Kill by port
-./portman kill 8080
-./portman kill 8080 --force
-./portman kill --state TIME_WAIT
-
-# Live TUI
-./portman watch
-
-# Port info
-./portman info 8080
-
-# Version
-./portman version
-```
-
-## Differences from Python core (GUI backend)
-
-| Aspect | Python core | Go CLI |
-|--------|-------------|--------|
-| Install | Used by Tauri app | Download binary |
-| Dependencies | psutil | Self-contained |
-| Role | IPC server for GUI | Terminal tool |
-
-## Why Go?
-
-- Distribution: Users don't need Python installed for the CLI
-- Speed: Fast startup and execution
-- Portability: Single binary for each platform
-- Reliability: Static typing catches errors early
-
-## License
-
-MIT
+Uses `gopsutil` to read ports, `cobra` for commands and Bubble Tea for `watch`. The desktop app
+reads ports separately, through its Python core.

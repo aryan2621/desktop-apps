@@ -1,28 +1,60 @@
 # Desktop apps
 
-Four Tauri desktop apps.
+**Four small, private desktop apps. Everything that can run on your computer, does.**
 
-- **[Capturita](capturita/)** — macOS screen recorder and editor: auto-zoom, trim, text, captions, hiding private info, AI editing by prompt (all on-device), export to MP4, upload to YouTube/Drive.
-- **[Murmur](murmur/)** — private, on-device voice dictation and voice assistant for macOS. Hold Fn, speak, and the text is typed where your cursor is. Hold Right Option to ask the assistant (Jarvis), or tap it for a hands-free conversation: it searches the web, reads pages and your screen, and acts on the Mac (apps, browser, timers, reminders, calendar, music, volume, finding and opening files). Whisper, a built-in AI model (llama.cpp) and the macOS voice run locally; only search words and page addresses go online.
-- **[Relay](relay/)** — a workbench for MCP developers on macOS: connect MCP servers (local stdio or Streamable HTTP with auth headers), inspect and call their tools, resources and prompts, read stdio server logs, save calls as repeatable tests, and watch an AI use your tools with approval for every call (a built-in on-device model — Qwen3.5, Gemma 4 or Qwen3.8, recommended for your Mac's memory — or Claude, OpenAI and Gemini with your API key).
-- **[PortMan](portman/)** — see and kill processes on your ports, as a CLI or a desktop GUI (macOS, Linux, Windows).
+| | | |
+|---|---|---|
+| **[Murmur](murmur/)** | Hold Fn and talk: your words are typed where your cursor is. Hold Right Option to ask Jarvis, a voice assistant that searches the web, reads your screen and acts on your Mac. | [⬇ macOS](https://github.com/aryan2621/desktop-apps/releases/latest/download/Murmur_0.1.0_aarch64.dmg) |
+| **[Capturita](capturita/)** | Record your screen, then polish it: auto-zoom, captions, titles, hidden private info and AI editing by prompt. Export an MP4 or upload to YouTube or Drive. | [⬇ macOS](https://github.com/aryan2621/desktop-apps/releases/latest/download/Capturita_0.1.0_aarch64.dmg) |
+| **[Relay](relay/)** | A workbench for MCP developers: connect a server, call its tools, save tests, and watch an AI use them, with your approval for every call. | [⬇ macOS](https://github.com/aryan2621/desktop-apps/releases/latest/download/Relay_0.1.0_aarch64.dmg) |
+| **[PortMan](portman/)** | See every open port and the process behind it, and stop it in one click. Desktop app and command line tool. | [⬇ macOS](https://github.com/aryan2621/desktop-apps/releases/latest/download/PortMan_1.0.0_aarch64.dmg) · [Windows](https://github.com/aryan2621/desktop-apps/releases/latest/download/PortMan_1.0.0_x64-setup.exe) · [Linux](https://github.com/aryan2621/desktop-apps/releases/latest/download/port-man_1.0.0_amd64.AppImage) |
 
-## Run
+[All downloads](https://github.com/aryan2621/desktop-apps/releases/latest) · each app's page has a
+demo, a user guide and a developer guide.
+
+## Requirements
+
+| | macOS | Notes |
+|---|---|---|
+| Murmur | 11+ | Apple silicon recommended. Speech model 550 MB; the assistant's AI 2.4–4.8 GB, optional. A Windows beta (dictation only) is on the releases page. |
+| Capturita | 15+ | Apple silicon. Captions model 547 MB and AI model 2.4–6.4 GB, both optional. |
+| Relay | 12+ | Apple silicon. On-device models 2.7–16.5 GB, optional (or use your Claude, OpenAI or Gemini key). |
+| PortMan | 10.13+ | Apple silicon build. Also Windows and Linux. |
+
+## Opening an app the first time
+
+The apps aren't signed with a paid Apple Developer certificate, so your system warns you once.
+
+**macOS, "Apple could not verify … is free of malware":** click **Done**, open **System Settings →
+Privacy & Security**, scroll down, click **Open Anyway** next to the app and confirm.
+
+If macOS says the app **"is damaged and can't be opened"**, run this once in Terminal (with the
+app's name) and open it again:
 
 ```bash
-# Capturita (macOS 15+)
-cd capturita && npm install && npm run tauri dev
-
-# Murmur (macOS 11+, Apple Silicon recommended; the assistant's AI is an optional ~5 GB download)
-cd murmur && pnpm install && pnpm tauri dev
-
-# Relay (macOS 12+, Apple Silicon; on-device models download from its Models page)
-cd relay && pnpm install && pnpm tauri dev
-
-# PortMan CLI
-cd portman/cli && go build -o portman . && ./portman list
+xattr -dr com.apple.quarantine /Applications/Murmur.app
 ```
 
-## Builds
+**Windows, "Windows protected your PC":** click **More info → Run anyway**.
 
-GitHub Actions builds every app on every push; download them from the run's **Artifacts**. Tag `v*` to publish a release.
+## Privacy
+
+- Speech, AI and captions run on your Mac. Nothing is uploaded unless you ask (a YouTube upload, a
+  web search, a cloud AI key you add).
+- No analytics or tracking. No shared keys ship in the apps: anything that signs in (Google uploads
+  in Capturita) uses your own account and keys, kept in your Keychain.
+
+## Build from source
+
+Each app's developer guide has the details. In short:
+
+```bash
+cd murmur    && pnpm install && pnpm tauri dev        # needs cmake
+cd capturita && npm install  && npm run tauri dev     # needs Xcode's Swift tools and cmake
+cd relay     && pnpm install && pnpm tauri dev        # needs cmake
+cd portman/gui && npm install && npm run tauri dev    # needs uv
+cd portman/cli && go build -o portman .
+```
+
+GitHub Actions builds every app on every push (download them from the run's **Artifacts**);
+tagging `v*` publishes a release.
