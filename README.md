@@ -1,6 +1,6 @@
 # Desktop apps
 
-[![M8ven Score](https://m8ven.ai/badge/mcp/aryan2621-desktop-apps-n5novw?v=c95bdc675d73b5c0ee69d2a5377f3836)](https://m8ven.ai/mcp/aryan2621-desktop-apps-n5novw?s=readme)
+[![M8ven Score](https://m8ven.ai/badge/mcp/aryan2621-desktop-apps-n5novw?v=64ca7b4b42122f9817a437371bf773bb)](https://m8ven.ai/mcp/aryan2621-desktop-apps-n5novw?s=readme)
 
 **Four small, private desktop apps. Everything that can run on your computer, does.**
 
