@@ -7,9 +7,13 @@
 
 ## Install
 
-1. Download [`Relay_0.1.0_aarch64.dmg`](https://github.com/aryan2621/desktop-apps/releases/latest/download/Relay_0.1.0_aarch64.dmg)
+1. Download [`Relay_0.1.0_aarch64.dmg`](https://github.com/aryan2621/dev-tools/releases/latest/download/Relay_0.1.0_aarch64.dmg)
    (macOS 12 or later, Apple silicon).
 2. Open it, drag **Relay** into **Applications**, and open Relay.
+
+**Windows** (10 or later): run [`Relay_0.1.0_x64-setup.exe`](https://github.com/aryan2621/dev-tools/releases/latest/download/Relay_0.1.0_x64-setup.exe).
+Secrets go to the Windows Credential Manager instead of the Keychain, and on-device models aren't
+available yet: use an API key provider in the Playground.
 
 **"Apple could not verify Relay is free of malware":** Relay isn't signed with a paid Apple
 Developer certificate, so macOS warns you the first time. Click **Done**, open **System Settings →

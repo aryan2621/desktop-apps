@@ -51,7 +51,7 @@ To run the Python sources instead while working on the core, set up `.venv` with
 > `env -u APPLE_SIGNING_IDENTITY npm run tauri build -- --bundles app`. CI has no identity, so
 > release builds are fine.
 
-CI (`.github/workflows/build.yml`) builds the app for macOS, Windows and Linux and the CLI for
+CI (`../.github/workflows/portman.yml`) builds the app for macOS, Windows and Linux and the CLI for
 five platforms on every push; tagging `v*` publishes a release.
 
 ## Code layout

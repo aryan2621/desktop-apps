@@ -12,10 +12,10 @@
 - **Open** a local web server in your browser straight from the list.
 - A **desktop app** (macOS, Windows, Linux) and a **command line tool** with a live terminal view.
 
-**[⬇ Download for macOS](https://github.com/aryan2621/desktop-apps/releases/latest/download/PortMan_1.0.0_aarch64.dmg)**
-· [Windows](https://github.com/aryan2621/desktop-apps/releases/latest/download/PortMan_1.0.0_x64-setup.exe)
-· [Linux](https://github.com/aryan2621/desktop-apps/releases/latest/download/port-man_1.0.0_amd64.AppImage)
-· [CLI and all downloads](https://github.com/aryan2621/desktop-apps/releases/latest)
+**[⬇ Download for macOS](https://github.com/aryan2621/dev-tools/releases/latest/download/PortMan_1.0.0_aarch64.dmg)**
+· [Windows](https://github.com/aryan2621/dev-tools/releases/latest/download/PortMan_1.0.0_x64-setup.exe)
+· [Linux](https://github.com/aryan2621/dev-tools/releases/latest/download/port-man_1.0.0_amd64.AppImage)
+· [CLI and all downloads](https://github.com/aryan2621/dev-tools/releases/latest)
 
 📖 **[User guide](docs/user.md)** — the app, the CLI, settings and troubleshooting
 🛠 **[Developer guide](docs/dev.md)** — build from source, code layout, how it works
@@ -37,7 +37,7 @@ protected your PC"**, click **More info → Run anyway**.
 **Linux:** `chmod +x port-man_1.0.0_amd64.AppImage && ./port-man_1.0.0_amd64.AppImage`, or
 `sudo apt install ./port-man_1.0.0_amd64.deb`.
 
-**CLI:** download `portman-<os>-<arch>` from the [releases page](https://github.com/aryan2621/desktop-apps/releases/latest), then:
+**CLI:** download `portman-<os>-<arch>` from the [releases page](https://github.com/aryan2621/dev-tools/releases/latest), then:
 ```bash
 chmod +x portman-darwin-arm64
 xattr -d com.apple.quarantine portman-darwin-arm64   # macOS only

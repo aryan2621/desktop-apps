@@ -4,7 +4,8 @@
 
 ## Build and install
 
-Needs Node 22, pnpm, Rust (stable) and `cmake` (for llama.cpp's server). macOS on Apple silicon.
+Needs Node 22, pnpm, Rust (stable) and `cmake` (for llama.cpp's server). macOS on Apple silicon,
+or Windows (without on-device models).
 
 ```bash
 cd relay
@@ -19,12 +20,15 @@ pnpm ui:dev         # the UI alone in a browser (port 1428), no Tauri
 pnpm typecheck      # TypeScript check
 ```
 
-Both `tauri dev` and `tauri build` first run `scripts/build-llama-server.sh`, which downloads
+On macOS, both `tauri dev` and `tauri build` first run `scripts/build-llama-server.sh`, which downloads
 llama.cpp (pinned version), builds `llama-server` as one static binary with the Metal shaders
 embedded, and puts it in `src-tauri/binaries/` for Tauri to bundle as a sidecar. It's skipped
 when that version is already built.
 
-CI (`.github/workflows/build.yml`) builds the `.dmg` on every push; tagging `v*` publishes a release.
+That step and the sidecar live in `src-tauri/tauri.macos.conf.json`, so Windows builds skip them.
+
+CI (`../.github/workflows/relay.yml`) builds the macOS `.dmg` and the Windows installer on every
+push that changes `relay/`; tagging `v*` builds every app in this repo and publishes one release.
 
 ## Code layout
 

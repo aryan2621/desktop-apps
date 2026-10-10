@@ -9,9 +9,9 @@
 
 | | Download | Then |
 |---|---|---|
-| **macOS** (Apple silicon) | [`PortMan_1.0.0_aarch64.dmg`](https://github.com/aryan2621/desktop-apps/releases/latest/download/PortMan_1.0.0_aarch64.dmg) | Drag PortMan into Applications and open it |
-| **Windows** | [`PortMan_1.0.0_x64-setup.exe`](https://github.com/aryan2621/desktop-apps/releases/latest/download/PortMan_1.0.0_x64-setup.exe) or [`.msi`](https://github.com/aryan2621/desktop-apps/releases/latest/download/PortMan_1.0.0_x64_en-US.msi) | Run the installer |
-| **Linux** | [`.AppImage`](https://github.com/aryan2621/desktop-apps/releases/latest/download/port-man_1.0.0_amd64.AppImage) or [`.deb`](https://github.com/aryan2621/desktop-apps/releases/latest/download/port-man_1.0.0_amd64.deb) | `chmod +x` the AppImage and run it, or `sudo apt install ./port-man_1.0.0_amd64.deb` |
+| **macOS** (Apple silicon) | [`PortMan_1.0.0_aarch64.dmg`](https://github.com/aryan2621/dev-tools/releases/latest/download/PortMan_1.0.0_aarch64.dmg) | Drag PortMan into Applications and open it |
+| **Windows** | [`PortMan_1.0.0_x64-setup.exe`](https://github.com/aryan2621/dev-tools/releases/latest/download/PortMan_1.0.0_x64-setup.exe) or [`.msi`](https://github.com/aryan2621/dev-tools/releases/latest/download/PortMan_1.0.0_x64_en-US.msi) | Run the installer |
+| **Linux** | [`.AppImage`](https://github.com/aryan2621/dev-tools/releases/latest/download/port-man_1.0.0_amd64.AppImage) or [`.deb`](https://github.com/aryan2621/dev-tools/releases/latest/download/port-man_1.0.0_amd64.deb) | `chmod +x` the AppImage and run it, or `sudo apt install ./port-man_1.0.0_amd64.deb` |
 
 **The first time you open it**, your system may warn you, because PortMan isn't signed with a
 paid certificate:
@@ -77,7 +77,7 @@ Settings are saved in the app on this computer.
 A separate, single-file program: no install, no Python.
 
 **Install:** download `portman-<os>-<arch>` from the
-[releases page](https://github.com/aryan2621/desktop-apps/releases/latest)
+[releases page](https://github.com/aryan2621/dev-tools/releases/latest)
 (`darwin-arm64`, `darwin-amd64`, `linux-amd64`, `linux-arm64`, `windows-amd64.exe`), then on
 macOS or Linux:
 

@@ -11,8 +11,9 @@
 - **Playground**: give an AI a task and watch it pick your tools. You approve every call. Use a
   model that runs on your Mac (Qwen3.5, Gemma 4, Qwen3.8) or Claude, OpenAI and Gemini with your key.
 
-**[⬇ Download for macOS](https://github.com/aryan2621/desktop-apps/releases/latest/download/Relay_0.1.0_aarch64.dmg)**
-· macOS 12+, Apple silicon · [all downloads](https://github.com/aryan2621/desktop-apps/releases/latest)
+**[⬇ Download for macOS](https://github.com/aryan2621/dev-tools/releases/latest/download/Relay_0.1.0_aarch64.dmg)**
+· [Windows](https://github.com/aryan2621/dev-tools/releases/latest/download/Relay_0.1.0_x64-setup.exe)
+· macOS 12+ (Apple silicon), Windows 10+ · [all downloads](https://github.com/aryan2621/dev-tools/releases/latest)
 
 📖 **[User guide](docs/user.md)** — every page, model and setting
 🛠 **[Developer guide](docs/dev.md)** — build from source, code layout, how it works
@@ -27,6 +28,10 @@
    ```bash
    xattr -dr com.apple.quarantine /Applications/Relay.app
    ```
+
+**Windows:** run `Relay_0.1.0_x64-setup.exe` (if SmartScreen says it protected your PC, click
+**More info → Run anyway**). On-device models are macOS-only for now; on Windows the Playground
+uses Claude, OpenAI or Gemini with your key.
 
 ## Quick start
 
