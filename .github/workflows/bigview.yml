@@ -1,0 +1,71 @@
+name: BigView
+
+on:
+  push:
+    branches: [main]
+    paths: ['bigview/**', '.github/workflows/bigview.yml']
+  pull_request:
+    paths: ['bigview/**', '.github/workflows/bigview.yml']
+  workflow_dispatch:
+  # The release workflow calls this one when a v* tag is pushed.
+  workflow_call:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    name: BigView (${{ matrix.name }})
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: macOS
+            os: macos-15
+            bundles: app,dmg
+          - name: Windows
+            os: windows-latest
+            bundles: nsis
+    runs-on: ${{ matrix.os }}
+    concurrency:
+      group: bigview-${{ matrix.name }}-${{ github.ref }}
+      cancel-in-progress: true
+    defaults:
+      run:
+        working-directory: bigview
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: bigview/package-lock.json
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: bigview/src-tauri
+
+      - run: npm ci
+
+      - name: Build app
+        id: build
+        continue-on-error: ${{ runner.os == 'macOS' }}
+        shell: bash
+        run: npx tauri build --bundles ${{ matrix.bundles }}
+
+      # hdiutil on GitHub's macOS runners sometimes fails with "Resource busy"; one retry clears it.
+      - name: Build app (retry)
+        if: steps.build.outcome == 'failure' && runner.os == 'macOS'
+        shell: bash
+        run: npx tauri build --bundles ${{ matrix.bundles }}
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: bigview-${{ runner.os }}
+          path: |
+            bigview/src-tauri/target/release/bundle/dmg/*.dmg
+            bigview/src-tauri/target/release/bundle/nsis/*.exe
+          if-no-files-found: error

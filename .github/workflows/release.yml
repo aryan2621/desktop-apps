@@ -1,0 +1,34 @@
+name: Release
+
+# Pushing a v* tag builds every app and publishes one GitHub Release with all installers.
+on:
+  push:
+    tags: ['v*']
+
+permissions:
+  contents: read
+
+jobs:
+  bigview:
+    uses: ./.github/workflows/bigview.yml
+  relay:
+    uses: ./.github/workflows/relay.yml
+  portman:
+    uses: ./.github/workflows/portman.yml
+
+  release:
+    name: GitHub Release
+    needs: [bigview, relay, portman]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+          merge-multiple: true
+
+      - uses: softprops/action-gh-release@v2
+        with:
+          files: artifacts/**/*
+          generate_release_notes: true

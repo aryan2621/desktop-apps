@@ -1,3 +1,0 @@
-[env]
-# whisper.cpp is built with CMake; match the app's minimum macOS so the linker doesn't warn.
-MACOSX_DEPLOYMENT_TARGET = "15.0"

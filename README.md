@@ -1,46 +1,48 @@
-# Desktop apps
+# Dev tools
 
 [![M8ven Score](https://m8ven.ai/badge/mcp/aryan2621-desktop-apps-n5novw?v=64ca7b4b42122f9817a437371bf773bb)](https://m8ven.ai/mcp/aryan2621-desktop-apps-n5novw?s=readme)
 
-**Four small, private desktop apps. Everything that can run on your computer, does.**
+**Small desktop tools for developers. Everything runs on your computer.**
 
 | | | |
 |---|---|---|
-| **[Murmur](murmur/)** | Hold Fn and talk: your words are typed where your cursor is. Hold Right Option to ask Jarvis, a voice assistant that searches the web, reads your screen and acts on your Mac. | [⬇ macOS](https://github.com/aryan2621/desktop-apps/releases/latest/download/Murmur_0.1.0_aarch64.dmg) |
-| **[Capturita](capturita/)** | Record your screen, then polish it: auto-zoom, captions, titles, hidden private info and AI editing by prompt. Export an MP4 or upload to YouTube or Drive. | [⬇ macOS](https://github.com/aryan2621/desktop-apps/releases/latest/download/Capturita_0.1.0_aarch64.dmg) |
-| **[Relay](relay/)** | A workbench for MCP developers: connect a server, call its tools, save tests, and watch an AI use them, with your approval for every call. | [⬇ macOS](https://github.com/aryan2621/desktop-apps/releases/latest/download/Relay_0.1.0_aarch64.dmg) |
-| **[PortMan](portman/)** | See every open port and the process behind it, and stop it in one click. Desktop app and command line tool. | [⬇ macOS](https://github.com/aryan2621/desktop-apps/releases/latest/download/PortMan_1.0.0_aarch64.dmg) · [Windows](https://github.com/aryan2621/desktop-apps/releases/latest/download/PortMan_1.0.0_x64-setup.exe) · [Linux](https://github.com/aryan2621/desktop-apps/releases/latest/download/port-man_1.0.0_amd64.AppImage) |
+| **[BigView](bigview/)** | Open and edit CSV, JSON and Excel files of any size: gigabyte files open in seconds. Sort, filter, column stats, find and replace, export. | [⬇ macOS](https://github.com/aryan2621/dev-tools/releases/latest/download/BigView_0.1.0_aarch64.dmg) · [Windows](https://github.com/aryan2621/dev-tools/releases/latest/download/BigView_0.1.0_x64-setup.exe) |
+| **[Relay](relay/)** | A workbench for MCP developers: connect a server, call its tools, save tests, and watch an AI use them, with your approval for every call. | [⬇ macOS](https://github.com/aryan2621/dev-tools/releases/latest/download/Relay_0.1.0_aarch64.dmg) · [Windows](https://github.com/aryan2621/dev-tools/releases/latest/download/Relay_0.1.0_x64-setup.exe) |
+| **[PortMan](portman/)** | See every open port and the process behind it, and stop it in one click. Desktop app and command line tool. | [⬇ macOS](https://github.com/aryan2621/dev-tools/releases/latest/download/PortMan_1.0.0_aarch64.dmg) · [Windows](https://github.com/aryan2621/dev-tools/releases/latest/download/PortMan_1.0.0_x64-setup.exe) · [Linux](https://github.com/aryan2621/dev-tools/releases/latest/download/port-man_1.0.0_amd64.AppImage) |
 
-[All downloads](https://github.com/aryan2621/desktop-apps/releases/latest) · each app's page has a
-demo, a user guide and a developer guide.
+[All downloads](https://github.com/aryan2621/dev-tools/releases/latest) · each app's page has a
+user guide and a developer guide.
+
+> **Murmur** (dictation and voice assistant) and **Capturita** (screen recorder and editor) used to
+> live here and now have their own repos: [aryan2621/murmur](https://github.com/aryan2621/murmur) ·
+> [aryan2621/capturita](https://github.com/aryan2621/capturita). Older releases here still carry
+> their installers.
 
 ## Requirements
 
-| | macOS | Notes |
-|---|---|---|
-| Murmur | 11+ | Apple silicon recommended. Speech model 550 MB; the assistant's AI 2.4–4.8 GB, optional. A Windows beta (dictation only) is on the releases page. |
-| Capturita | 15+ | Apple silicon. Captions model 547 MB and AI model 2.4–6.4 GB, both optional. |
-| Relay | 12+ | Apple silicon. On-device models 2.7–16.5 GB, optional (or use your Claude, OpenAI or Gemini key). |
-| PortMan | 10.13+ | Apple silicon build. Also Windows and Linux. |
+| | macOS | Windows | Notes |
+|---|---|---|---|
+| BigView | 10.13+ | 10+ | Apple silicon build for macOS. |
+| Relay | 12+ | 10+ | Apple silicon build for macOS. On-device models 2.7–16.5 GB, optional (or use your Claude, OpenAI or Gemini key). |
+| PortMan | 10.13+ | 10+ | Apple silicon build for macOS. Also Linux. |
 
 ## Privacy
 
-- Speech, AI and captions run on your Mac. Nothing is uploaded unless you ask (a YouTube upload, a
-  web search, a cloud AI key you add).
-- No analytics or tracking. No shared keys ship in the apps: anything that signs in (Google uploads
-  in Capturita) uses your own account and keys, kept in your Keychain.
+- Everything runs on your computer. Nothing is uploaded unless you ask (a cloud AI key you add in
+  Relay).
+- No analytics or tracking.
 
 ## Build from source
 
 Each app's developer guide has the details. In short:
 
 ```bash
-cd murmur    && pnpm install && pnpm tauri dev        # needs cmake
-cd capturita && npm install  && npm run tauri dev     # needs Xcode's Swift tools and cmake
+cd bigview   && npm install  && npm run tauri dev
 cd relay     && pnpm install && pnpm tauri dev        # needs cmake
 cd portman/gui && npm install && npm run tauri dev    # needs uv
 cd portman/cli && go build -o portman .
 ```
 
-GitHub Actions builds every app on every push (download them from the run's **Artifacts**);
-tagging `v*` publishes a release.
+Each app has its own workflow in the **Actions** tab (BigView, Relay, PortMan): every push that
+changes an app builds its macOS and Windows installers (download them from the run's
+**Artifacts**). Tagging `v*` builds them all and publishes one release.
