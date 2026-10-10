@@ -1,0 +1,52 @@
+[package]
+name = "bigview"
+version = "0.1.0"
+description = "Fast viewer and editor for very large CSV, JSON and Excel files"
+authors = ["Rishabh Verma"]
+edition = "2021"
+
+[lib]
+# The `_lib` suffix may seem redundant but it is necessary
+# to make the lib name unique and wouldn't conflict with the bin name.
+# This seems to be only an issue on Windows, see https://github.com/rust-lang/cargo/issues/8519
+name = "bigview_lib"
+crate-type = ["staticlib", "cdylib", "rlib"]
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+tauri = { version = "2", features = [] }
+tauri-plugin-opener = "2"
+tauri-plugin-dialog = "2"
+serde = { version = "1", features = ["derive"] }
+serde_json = { version = "1", features = ["raw_value"] }
+memmap2 = "0.9"
+memchr = "2"
+csv = "1"
+parking_lot = "0.12"
+regex = "1.13"
+regex-syntax = "0.8"
+encoding_rs = "0.8"
+rayon = "1.12"
+calamine = { version = "0.36", features = ["dates"] }
+chrono = { version = "0.4", default-features = false }
+rust_xlsxwriter = { version = "0.99", features = ["constant_memory"] }
+indexmap = { version = "2", features = ["serde"] }
+fs4 = { version = "=1.1.0", features = ["sync"] }
+zip = { version = "=8.6.0", default-features = false, features = ["deflate"] }
+
+# Read the optimization guideline for more details: https://tauri.app/concept/size/#cargo-configuration
+[profile.release]
+codegen-units = 1
+lto = true
+opt-level = 3
+panic = "abort"
+strip = true
+
+# Keep dev builds fast enough to open 1 GB files.
+[profile.dev.package."*"]
+opt-level = 3
+
+[profile.dev]
+opt-level = 1
