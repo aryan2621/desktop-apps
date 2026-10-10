@@ -74,7 +74,8 @@ fn model(id: &str) -> Result<&'static Model, String> {
         .find(|m| m.id == id)
         .ok_or_else(|| "Unknown model".into())
 }
-/// The Mac's memory in GB.
+/// The computer's memory in GB.
+#[cfg(target_os = "macos")]
 pub fn ram_gb() -> u64 {
     let mut bytes: u64 = 0;
     let mut len = std::mem::size_of::<u64>();
@@ -102,6 +103,39 @@ pub fn ram_gb() -> u64 {
         8
     }
 }
+/// The computer's memory in GB.
+#[cfg(windows)]
+pub fn ram_gb() -> u64 {
+    #[repr(C)]
+    struct MemoryStatusEx {
+        length: u32,
+        memory_load: u32,
+        total_phys: u64,
+        avail_phys: u64,
+        total_page_file: u64,
+        avail_page_file: u64,
+        total_virtual: u64,
+        avail_virtual: u64,
+        avail_extended_virtual: u64,
+    }
+    #[link(name = "kernel32")]
+    extern "system" {
+        fn GlobalMemoryStatusEx(buffer: *mut MemoryStatusEx) -> i32;
+    }
+    let mut status: MemoryStatusEx = unsafe { std::mem::zeroed() };
+    status.length = std::mem::size_of::<MemoryStatusEx>() as u32;
+    if unsafe { GlobalMemoryStatusEx(&mut status) } != 0 {
+        status.total_phys / (1 << 30)
+    } else {
+        8
+    }
+}
+
+#[cfg(not(any(target_os = "macos", windows)))]
+pub fn ram_gb() -> u64 {
+    8
+}
+
 /// The strongest model this Mac runs comfortably.
 pub fn recommended(ram: u64) -> &'static str {
     ["qwen3.8-27b", "qwen3.5-9b"]
@@ -129,14 +163,20 @@ impl Drop for Runtime {
     }
 }
 
+#[cfg(unix)]
 extern "C" {
     fn kill(pid: i32, sig: i32) -> i32;
     fn signal(sig: i32, handler: usize) -> usize;
 }
+#[cfg(unix)]
 const SIGHUP: i32 = 1;
+#[cfg(unix)]
 const SIGINT: i32 = 2;
+#[cfg(unix)]
 const SIGKILL: i32 = 9;
+#[cfg(unix)]
 const SIGTERM: i32 = 15;
+#[cfg(unix)]
 const SIG_IGN: usize = 1;
 
 /// Runs as its own small process (Relay's binary with `--llama-watchdog`) that owns the model
@@ -155,6 +195,7 @@ pub fn watchdog(pid_file: &str, exe: &str, args: &[String]) -> ! {
     // Only Relay closing the pipe stops the model: ignore the signals sent to the whole group
     // (Ctrl-C in a terminal) or by `pkill relay`, which would otherwise leave it running.
     // Set after spawning so the model server keeps the default handlers.
+    #[cfg(unix)]
     unsafe {
         for sig in [SIGHUP, SIGINT, SIGTERM] {
             signal(sig, SIG_IGN);
@@ -176,7 +217,10 @@ pub fn watchdog(pid_file: &str, exe: &str, args: &[String]) -> ! {
         }
         if closed.load(std::sync::atomic::Ordering::SeqCst) {
             // Ask politely, then insist: the process is still ours to reap, so the pid is too.
-            unsafe { kill(child.id() as i32, SIGTERM) };
+            #[cfg(unix)]
+            unsafe {
+                kill(child.id() as i32, SIGTERM)
+            };
             for _ in 0..30 {
                 if matches!(child.try_wait(), Ok(Some(_))) {
                     break;
@@ -207,6 +251,13 @@ pub fn stop_leftover(app: &tauri::AppHandle) {
         return;
     };
     let _ = std::fs::remove_file(&file);
+    #[cfg(unix)]
+    stop_if_ours(pid);
+}
+
+/// Kills `pid`, but only if it is still our model server, not an unrelated process that reused it.
+#[cfg(unix)]
+fn stop_if_ours(pid: i32) {
     // Only if that pid is still our model server, not an unrelated process that reused it.
     let command = std::process::Command::new("ps")
         .args(["-p", &pid.to_string(), "-o", "command="])
@@ -380,7 +431,13 @@ pub async fn start(
     let exe = if bundled.exists() {
         bundled
     } else {
-        PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("binaries/llama-server-aarch64-apple-darwin")
+        #[cfg(target_os = "macos")]
+        {
+            PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("binaries/llama-server-aarch64-apple-darwin")
+        }
+        // The on-device model server is only built for macOS so far.
+        #[cfg(not(target_os = "macos"))]
+        return Err("On-device models run on macOS only for now. Add a Claude, OpenAI or Gemini key in Settings to use Relay's AI.".into());
     };
     let token = uuid::Uuid::new_v4().to_string();
     let log = std::fs::File::create(store::data_dir(app)?.join("inference.log"))

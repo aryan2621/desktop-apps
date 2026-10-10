@@ -286,9 +286,7 @@ pub async fn sign_in(s: &Server, cancel: oneshot::Receiver<()>) -> Result<(), St
     if !auth_url.starts_with("https://") && !auth_url.starts_with("http://") {
         return Err("The server's sign-in page isn't a web address.".into());
     }
-    std::process::Command::new("open")
-        .arg(auth_url)
-        .status()
+    open_browser(&auth_url)
         .map_err(|e| format!("Could not open the browser: {e}"))?;
     let url = tokio::select! {
         r = tokio::time::timeout(Duration::from_secs(300), callback(v4, v6)) => {
@@ -314,4 +312,20 @@ pub async fn sign_in(s: &Server, cancel: oneshot::Receiver<()>) -> Result<(), St
     let mut saved = read(&s.id).await?;
     saved.metadata = Some(metadata);
     write(&s.id, &saved).await
+}
+
+/// Opens `url` in the default browser.
+fn open_browser(url: &str) -> std::io::Result<std::process::ExitStatus> {
+    #[cfg(target_os = "macos")]
+    let mut command = std::process::Command::new("open");
+    // rundll32 takes the URL as-is; `cmd /c start` would treat its `&`s as command separators.
+    #[cfg(windows)]
+    let mut command = {
+        let mut c = std::process::Command::new("rundll32");
+        c.arg("url.dll,FileProtocolHandler");
+        c
+    };
+    #[cfg(not(any(target_os = "macos", windows)))]
+    let mut command = std::process::Command::new("xdg-open");
+    command.arg(url).status()
 }

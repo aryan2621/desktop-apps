@@ -37,8 +37,16 @@ pub struct Session {
 #[derive(Default)]
 pub struct Sessions(pub Mutex<HashMap<String, Session>>);
 
+#[cfg(windows)]
+pub fn shell_path() -> &'static str {
+    // Windows apps get the user's full PATH already.
+    static PATH: OnceLock<String> = OnceLock::new();
+    PATH.get_or_init(|| std::env::var("PATH").unwrap_or_default())
+}
+
 /// The PATH a terminal would have. Apps opened from Finder get only /usr/bin:/bin, so servers
 /// launched with npx, uvx, node or anything from Homebrew/nvm would not be found without this.
+#[cfg(not(windows))]
 pub fn shell_path() -> &'static str {
     static PATH: OnceLock<String> = OnceLock::new();
     PATH.get_or_init(|| {
@@ -84,6 +92,24 @@ pub fn shell_path() -> &'static str {
     })
 }
 
+/// Finds `npx`, `uvx` and other commands that are `.cmd` / `.bat` shims on Windows, which
+/// spawning by bare name would miss (only `.exe` is tried).
+#[cfg(windows)]
+fn windows_program(program: std::path::PathBuf, path: &str) -> std::path::PathBuf {
+    if program.extension().is_some() || program.components().count() > 1 {
+        return program;
+    }
+    for dir in std::env::split_paths(path) {
+        for ext in ["exe", "cmd", "bat"] {
+            let candidate = dir.join(&program).with_extension(ext);
+            if candidate.is_file() {
+                return candidate;
+            }
+        }
+    }
+    program
+}
+
 /// Keeps the last few KB of a server's stderr so startup failures can say what went wrong.
 fn collect_stderr(stderr: Option<ChildStderr>) -> Log {
     let log = Arc::new(std::sync::Mutex::new(String::new()));
@@ -124,6 +150,8 @@ pub async fn connect_with(
         let path = tokio::task::spawn_blocking(shell_path)
             .await
             .map_err(|e| e.to_string())?;
+        #[cfg(windows)]
+        let program = windows_program(program, path);
         let mut command = Command::new(&program);
         command.args(&s.args).env("PATH", path).kill_on_drop(true);
         if !s.cwd.is_empty() {
